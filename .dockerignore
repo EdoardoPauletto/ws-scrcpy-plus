@@ -1,0 +1,11 @@
+.git
+.idea
+node_modules
+dist
+build
+logs
+.appium-home
+Dockerfile
+docker-compose*.yml
+.dockerignore
+scrcpy-server

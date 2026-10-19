@@ -1,0 +1,20 @@
+services:
+  ws-scrcpy:
+    build: .
+    image: ws-scrcpy:local
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${WS_SCRCPY_PORT:-8000}:8000"
+    environment:
+      # Optional: comma-separated host[:port] to `adb connect` on startup.
+      # Devices can also be connected later: `docker compose exec ws-scrcpy adb connect ...`
+      ADB_CONNECT: ${ADB_CONNECT:-}
+      # WS_SCRCPY_CONFIG: /config/config.yaml
+    volumes:
+      # adb RSA keys: devices don't ask to re-authorize after every rebuild
+      - adb-keys:/root/.android
+      # - ./config.yaml:/config/config.yaml:ro
+
+volumes:
+  adb-keys:

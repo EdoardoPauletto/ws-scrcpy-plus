@@ -1,0 +1,11 @@
+# USB passthrough. Use together with the main file:
+#   docker compose -f docker-compose.yml -f docker-compose.usb.yml up -d
+# Stop any adb server on the host first (`adb kill-server`): only one adb
+# server at a time can hold a USB device.
+services:
+  ws-scrcpy:
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+    device_cgroup_rules:
+      # 189 = USB device character major; allows devices plugged in later
+      - 'c 189:* rmw'
