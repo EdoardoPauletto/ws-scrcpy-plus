@@ -2,6 +2,12 @@ import Rect from './Rect';
 import Size from './Size';
 import Util from './Util';
 
+export interface NewDisplay {
+    width: number;
+    height: number;
+    dpi: number;
+}
+
 interface Settings {
     crop?: Rect | null;
     bitrate: number;
@@ -13,10 +19,23 @@ interface Settings {
     displayId?: number;
     codecOptions?: string;
     encoderName?: string;
+    newDisplay?: NewDisplay | null;
+    // keep the device screen on by simulating user activity (scrcpy --keep-active)
+    keepActive?: boolean;
+    // the new virtual display follows the size of the client window (scrcpy --flex-display)
+    flexDisplay?: boolean;
+    // package of the app started on the new virtual display (also reported back for a running stream)
+    startApp?: string;
 }
 
 export default class VideoSettings {
     public static readonly BASE_BUFFER_LENGTH: number = 35;
+    public static readonly NEW_DISPLAY_BUFFER_LENGTH: number = 6;
+    public static readonly FLAGS_BUFFER_LENGTH: number = 1;
+    private static readonly FLAG_KEEP_ACTIVE = 1;
+    private static readonly FLAG_FLEX_DISPLAY = 1 << 1;
+    // `displayId` value asking the device to create a new virtual display
+    public static readonly DISPLAY_ID_NEW = -1;
     public readonly crop?: Rect | null = null;
     public readonly bitrate: number = 0;
     public readonly bounds?: Size | null = null;
@@ -27,6 +46,10 @@ export default class VideoSettings {
     public readonly displayId: number = 0;
     public readonly codecOptions?: string;
     public readonly encoderName?: string;
+    public readonly newDisplay: NewDisplay | null = null;
+    public readonly keepActive: boolean = false;
+    public readonly flexDisplay: boolean = false;
+    public readonly startApp?: string;
 
     constructor(data?: Settings, public readonly bytesLength: number = VideoSettings.BASE_BUFFER_LENGTH) {
         if (data) {
@@ -37,14 +60,27 @@ export default class VideoSettings {
             this.iFrameInterval = data.iFrameInterval;
             this.sendFrameMeta = data.sendFrameMeta || false;
             this.lockedVideoOrientation = data.lockedVideoOrientation || -1;
-            if (typeof data.displayId === 'number' && !isNaN(data.displayId) && data.displayId >= 0) {
+            if (
+                typeof data.displayId === 'number' &&
+                !isNaN(data.displayId) &&
+                data.displayId >= VideoSettings.DISPLAY_ID_NEW
+            ) {
                 this.displayId = data.displayId;
+            }
+            this.keepActive = !!data.keepActive;
+            this.flexDisplay = !!data.flexDisplay;
+            const { newDisplay } = data;
+            if (newDisplay && (newDisplay.width || newDisplay.height || newDisplay.dpi)) {
+                this.newDisplay = { width: newDisplay.width, height: newDisplay.height, dpi: newDisplay.dpi };
             }
             if (data.codecOptions) {
                 this.codecOptions = data.codecOptions.trim();
             }
             if (data.encoderName) {
                 this.encoderName = data.encoderName.trim();
+            }
+            if (data.startApp && data.startApp.trim()) {
+                this.startApp = data.startApp.trim();
             }
         }
     }
@@ -99,6 +135,28 @@ export default class VideoSettings {
             offset += encoderNameLength;
             encoderName = Util.utf8ByteArrayToString(encoderNameBytes);
         }
+        let newDisplay: NewDisplay | null = null;
+        if (buffer.length - offset >= VideoSettings.NEW_DISPLAY_BUFFER_LENGTH) {
+            const ndWidth = buffer.readUInt16BE(offset);
+            const ndHeight = buffer.readUInt16BE(offset + 2);
+            const ndDpi = buffer.readUInt16BE(offset + 4);
+            offset += VideoSettings.NEW_DISPLAY_BUFFER_LENGTH;
+            newDisplay = { width: ndWidth, height: ndHeight, dpi: ndDpi };
+        }
+        let flags = 0;
+        if (buffer.length - offset >= VideoSettings.FLAGS_BUFFER_LENGTH) {
+            flags = buffer.readUInt8(offset);
+            offset += VideoSettings.FLAGS_BUFFER_LENGTH;
+        }
+        let startApp;
+        if (buffer.length - offset >= 4) {
+            const startAppLength = buffer.readInt32BE(offset);
+            offset += 4;
+            if (startAppLength) {
+                startApp = Util.utf8ByteArrayToString(buffer.slice(offset, offset + startAppLength));
+                offset += startAppLength;
+            }
+        }
         return new VideoSettings(
             {
                 crop,
@@ -111,6 +169,10 @@ export default class VideoSettings {
                 sendFrameMeta,
                 codecOptions,
                 encoderName,
+                newDisplay,
+                keepActive: (flags & VideoSettings.FLAG_KEEP_ACTIVE) !== 0,
+                flexDisplay: (flags & VideoSettings.FLAG_FLEX_DISPLAY) !== 0,
+                startApp,
             },
             offset,
         );
@@ -129,6 +191,10 @@ export default class VideoSettings {
                 sendFrameMeta: a.sendFrameMeta,
                 codecOptions: a.codecOptions,
                 encoderName: a.encoderName,
+                newDisplay: a.newDisplay,
+                keepActive: a.keepActive,
+                flexDisplay: a.flexDisplay,
+                startApp: a.startApp,
             },
             a.bytesLength,
         );
@@ -147,8 +213,19 @@ export default class VideoSettings {
             Size.equals(this.bounds, o.bounds) &&
             this.bitrate === o.bitrate &&
             this.maxFps === o.maxFps &&
-            this.iFrameInterval === o.iFrameInterval
+            this.iFrameInterval === o.iFrameInterval &&
+            VideoSettings.equalNewDisplays(this.newDisplay, o.newDisplay) &&
+            this.keepActive === o.keepActive &&
+            this.flexDisplay === o.flexDisplay &&
+            this.startApp === o.startApp
         );
+    }
+
+    private static equalNewDisplays(a: NewDisplay | null, b: NewDisplay | null): boolean {
+        if (!a || !b) {
+            return a === b;
+        }
+        return a.width === b.width && a.height === b.height && a.dpi === b.dpi;
     }
 
     public toBuffer(): Buffer {
@@ -163,7 +240,15 @@ export default class VideoSettings {
             encoderNameBytes = Util.stringToUtf8ByteArray(this.encoderName);
             additionalLength += encoderNameBytes.length;
         }
-        const buffer = Buffer.alloc(VideoSettings.BASE_BUFFER_LENGTH + additionalLength);
+        const startAppBytes = this.startApp ? Util.stringToUtf8ByteArray(this.startApp) : new Uint8Array(0);
+        const buffer = Buffer.alloc(
+            VideoSettings.BASE_BUFFER_LENGTH +
+                additionalLength +
+                VideoSettings.NEW_DISPLAY_BUFFER_LENGTH +
+                VideoSettings.FLAGS_BUFFER_LENGTH +
+                4 +
+                startAppBytes.length,
+        );
         const { width = 0, height = 0 } = this.bounds || {};
         const { left = 0, top = 0, right = 0, bottom = 0 } = this.crop || {};
         let offset = 0;
@@ -191,7 +276,23 @@ export default class VideoSettings {
             buffer.fill(encoderNameBytes, offset);
             offset += encoderNameBytes.length;
         } else {
-            buffer.writeInt32BE(0, offset);
+            offset = buffer.writeInt32BE(0, offset);
+        }
+        const { width: ndWidth = 0, height: ndHeight = 0, dpi: ndDpi = 0 } = this.newDisplay || {};
+        offset = buffer.writeUInt16BE(ndWidth, offset);
+        offset = buffer.writeUInt16BE(ndHeight, offset);
+        offset = buffer.writeUInt16BE(ndDpi, offset);
+        let flags = 0;
+        if (this.keepActive) {
+            flags |= VideoSettings.FLAG_KEEP_ACTIVE;
+        }
+        if (this.flexDisplay) {
+            flags |= VideoSettings.FLAG_FLEX_DISPLAY;
+        }
+        offset = buffer.writeUInt8(flags, offset);
+        offset = buffer.writeInt32BE(startAppBytes.length, offset);
+        if (startAppBytes.length) {
+            buffer.fill(startAppBytes, offset);
         }
         return buffer;
     }
@@ -208,7 +309,11 @@ export default class VideoSettings {
             this.lockedVideoOrientation}, displayId=${
             this.displayId}, codecOptions=${
             this.codecOptions}, encoderName=${
-            this.encoderName}}`;
+            this.encoderName}, newDisplay=${
+            this.newDisplay ? `${this.newDisplay.width}x${this.newDisplay.height}/${this.newDisplay.dpi}` : null}, keepActive=${
+            this.keepActive}, flexDisplay=${
+            this.flexDisplay}, startApp=${
+            this.startApp}}`;
     }
 
     public toJSON(): Settings {
@@ -223,6 +328,10 @@ export default class VideoSettings {
             displayId: this.displayId,
             codecOptions: this.codecOptions,
             encoderName: this.encoderName,
+            newDisplay: this.newDisplay,
+            keepActive: this.keepActive,
+            flexDisplay: this.flexDisplay,
+            startApp: this.startApp,
         };
     }
 }

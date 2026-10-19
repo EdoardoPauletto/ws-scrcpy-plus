@@ -1,11 +1,4 @@
-:root {
-    --block-top-padding: 0.5rem;
-    --block-bottom-padding: 0.5rem;
-    --button-top-padding: 0.2rem;
-    --button-bottom-padding: 0.2rem;
-    --header-height: 3rem;
-    --footer-height: 1.55rem;
-}
+/* "Configure stream": a Material 3 modal side sheet with Android settings style rows */
 
 .dialog-background {
     width: 100%;
@@ -13,128 +6,271 @@
     position: fixed;
     top: 0;
     left: 0;
-    background-color: rgba(0, 0, 0, 0.75);
+    background-color: var(--md-scrim);
     z-index: 3;
+    animation: dialog-fade-in 0.2s ease;
 }
 
 .dialog-container {
-    font-family: monospace;
-    width: 75%;
-    max-width: 30rem;
-    min-width: 20rem;
-    background-color: var(--main-bg-color);
-    /*border-radius: 0.3rem;*/
-    overflow: hidden;
-}
-
-.dialog-container.ready {
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    width: min(100%, 460px);
     height: 100%;
-    min-height: 100%;
-}
-
-.dialog-container button, .dialog-container select, .dialog-container input {
-    font-family: monospace;
-}
-
-.dialog-container button {
-    font-size: var(--font-size);
-}
-
-.dialog-container select {
-    text-overflow: ellipsis;
-}
-
-.dialog-block {
-}
-
-.dialog-header {
-    background-color: var(--header-bg-color);
-    height: var(--header-height);
     overflow: hidden;
+    font-family: var(--md-font);
+    font-size: 14px;
+    color: var(--md-on-surface);
+    background-color: var(--md-surface-container-low);
+    border-radius: 0 16px 16px 0;
+    box-shadow: var(--md-elevation-2);
+    color-scheme: light dark;
+    animation: dialog-slide-in 0.25s cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes dialog-fade-in {
+    from {
+        opacity: 0;
+    }
+}
+
+@keyframes dialog-slide-in {
+    from {
+        transform: translateX(-100%);
+    }
+}
+
+/* Closing: the sheet slides back out while the scrim fades (see ConfigureScrcpy.removeUI) */
+.dialog-background.closing {
+    pointer-events: none;
+    animation: dialog-fade-out 0.2s ease forwards;
+}
+
+.dialog-background.closing .dialog-container {
+    animation: dialog-slide-out 0.2s cubic-bezier(0.3, 0, 0.8, 0.15) forwards;
+}
+
+@keyframes dialog-fade-out {
+    to {
+        opacity: 0;
+    }
+}
+
+@keyframes dialog-slide-out {
+    to {
+        transform: translateX(-100%);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dialog-background,
+    .dialog-container {
+        animation: none !important;
+    }
+}
+
+.dialog-container svg {
+    fill: currentColor;
+    flex-shrink: 0;
+}
+
+.dialog-container .hidden {
+    display: none !important;
+}
+
+/* Header: back button, title and device name */
+.dialog-header {
     display: flex;
     align-items: center;
-    width: auto;
-    position: initial;
+    gap: 16px;
+    flex-shrink: 0;
+    padding: 12px 16px 12px 12px;
 }
 
-.dialog-header span.dialog-title {
-    display: inline-block;
-    padding: 0 0.5rem;
+.dialog-titles {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
 }
 
-.dialog-body {
-    padding: var(--block-top-padding) 0.5rem var(--block-bottom-padding);
-    background-color: var(--control-buttons-bg-color);
-    overflow: auto;
+.dialog-title {
+    font-size: 22px;
+    line-height: 28px;
 }
 
-.dialog-body.hidden {
-    height: 0;
-    padding: 0;
-}
-
-.dialog-body.visible {
-    height: calc(
-            100%
-            - 2 * var(--block-top-padding)
-            - 2 * var(--block-bottom-padding)
-            - var(--header-height)
-            - var(--footer-height)
-    );
-}
-
-.dialog-footer {
-    /*display: flex;*/
-    /*flex-direction: row-reverse;*/
-    padding: var(--block-top-padding) 0.5rem var(--block-bottom-padding);
-    background-color: var(--stream-bg-color);
-    height: var(--footer-height);
+.dialog-subtitle {
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--md-on-surface-variant);
     overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.dialog-footer span.subtitle {
-    font-weight: lighter;
-    line-height: var(--footer-height);
-    float: left;
+/* Body: scrollable list of sections */
+.dialog-body {
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
-.dialog-footer button {
-    padding: var(--button-top-padding) 0.5rem var(--button-bottom-padding);
-    margin: 0 0 0 0.5rem;
-    border-radius: 0.3rem;
-    /*background-color: var(--main-bg-color);*/
-    color: var(--button-text-color);
-    border: 1px solid var(--button-border-color);
-    cursor: pointer;
-    background-color: rgba(0, 0, 0, 0);
-    height: var(--footer-height);
-    float: right;
+.md-section + .md-section {
+    border-top: 1px solid var(--md-outline-variant);
 }
 
-.dialog-footer button:disabled {
-    cursor: not-allowed;
-    color: var(--text-color-light);
+.md-section-title {
+    padding: 16px 24px 4px 64px;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 20px;
+    color: var(--md-primary);
 }
 
-.controls .label {
-    grid-column: labels;
-}
-
-.controls .input {
-    grid-column: controls;
-    box-sizing: border-box;
-    margin: 0;
-    /*height: 2.75ex;*/
-}
-
-.controls .button {
-    grid-column: controls;
-}
-
-.controls {
+/* Row: icon | label (+ info button, value) | control */
+.md-row {
     display: grid;
-    grid-template-columns: [labels] 35% [controls] 65%;
-    padding: 1rem;
-    grid-gap: 0.2rem;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
     align-items: center;
+    column-gap: 16px;
+    row-gap: 4px;
+    min-height: 56px;
+    box-sizing: border-box;
+    padding: 8px 24px;
+}
+
+.md-row-icon {
+    display: flex;
+    color: var(--md-on-surface-variant);
+}
+
+.md-row-text {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+}
+
+.md-row-label {
+    font-size: 16px;
+    line-height: 24px;
+    cursor: pointer;
+}
+
+.md-row-value {
+    margin-left: auto;
+    padding-left: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--md-primary);
+    white-space: nowrap;
+}
+
+.md-row-value:empty {
+    display: none;
+}
+
+.md-row-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Sliders take the whole row below the label */
+.md-row.wide .md-row-control {
+    grid-column: 2 / -1;
+}
+
+/* Info button that shows the tooltip */
+.md-info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background-color: transparent;
+    color: var(--md-outline);
+    cursor: help;
+}
+
+.md-info svg {
+    width: 18px;
+    height: 18px;
+}
+
+.md-info:hover,
+.md-info:focus-visible {
+    color: var(--md-primary);
+    background-color: color-mix(in srgb, var(--md-primary) 10%, transparent);
+}
+
+/* Saved settings actions, on a single line */
+.md-actions {
+    display: flex;
+    gap: 8px;
+    padding: 16px 24px 24px;
+    border-top: 1px solid var(--md-outline-variant);
+}
+
+/* Footer: connection status and "Open" */
+.dialog-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-shrink: 0;
+    margin-top: auto;
+    padding: 16px 24px;
+    border-top: 1px solid var(--md-outline-variant);
+}
+
+.dialog-footer .subtitle {
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--md-on-surface-variant);
+}
+
+/* A row that can't be used yet (e.g. "Open in a new tab" without an app) */
+.md-row.disabled {
+    opacity: 0.38;
+}
+
+.md-row.disabled .md-switch,
+.md-row.disabled .md-row-label {
+    cursor: not-allowed;
+}
+
+/* Shareable link of the stream, below "Open in a new tab" */
+.md-link-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: -4px 16px 8px 64px;
+    padding: 4px 4px 4px 12px;
+    border-radius: 8px;
+    background-color: var(--md-surface-container-high);
+}
+
+.md-link-url {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--md-font-mono);
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--md-on-surface-variant);
+    overflow-wrap: anywhere;
+    user-select: all;
+}
+
+.md-link-row .md-icon-button {
+    width: 32px;
+    height: 32px;
+}
+
+.md-link-row .md-icon-button svg {
+    width: 18px;
+    height: 18px;
 }

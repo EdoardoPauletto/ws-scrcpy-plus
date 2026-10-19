@@ -8,4 +8,8 @@ export interface ParamsStreamScrcpy extends ParamsStream {
     fitToScreen?: boolean;
     videoSettings?: VideoSettings;
     captureKeyboard?: boolean;
+    // forward the device audio (Android 11+)
+    audio?: boolean;
+    // keep playing the audio on the device too (Android 13+)
+    audioDup?: boolean;
 }

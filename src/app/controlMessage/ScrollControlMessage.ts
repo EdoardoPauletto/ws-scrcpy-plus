@@ -9,6 +9,8 @@ export interface ScrollControlMessageInterface extends ControlMessageInterface {
 
 export class ScrollControlMessage extends ControlMessage {
     public static PAYLOAD_LENGTH = 20;
+    // scrcpy encodes scroll amounts in the [-16, 16] range as signed 16-bit fixed-point values
+    private static readonly MAX_SCROLL = 16;
 
     constructor(readonly position: Position, readonly hScroll: number, readonly vScroll: number) {
         super(ControlMessage.TYPE_SCROLL);
@@ -25,9 +27,15 @@ export class ScrollControlMessage extends ControlMessage {
         offset = buffer.writeUInt32BE(this.position.point.y, offset);
         offset = buffer.writeUInt16BE(this.position.screenSize.width, offset);
         offset = buffer.writeUInt16BE(this.position.screenSize.height, offset);
-        offset = buffer.writeInt32BE(this.hScroll, offset);
-        buffer.writeInt32BE(this.vScroll, offset);
+        offset = buffer.writeInt16BE(ScrollControlMessage.toFixedPoint(this.hScroll), offset);
+        offset = buffer.writeInt16BE(ScrollControlMessage.toFixedPoint(this.vScroll), offset);
+        buffer.writeInt32BE(0, offset); // buttons
         return buffer;
+    }
+
+    private static toFixedPoint(value: number): number {
+        const clamped = Math.max(-1, Math.min(1, value / ScrollControlMessage.MAX_SCROLL));
+        return Math.max(-0x8000, Math.min(0x7fff, Math.round(clamped * 0x8000)));
     }
 
     public toString(): string {

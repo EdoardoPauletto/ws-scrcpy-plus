@@ -1,0 +1,1786 @@
+From 4331842f6e65582ecab1ea0cec13bb651bf6de03 Mon Sep 17 00:00:00 2001
+From: Edoardo Pauletto <104910976+EdoardoPauletto@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 22:31:51 +0200
+Subject: [PATCH] Add a WebSocket server for ws-scrcpy
+
+Run as `app_process / com.genymobile.scrcpy.Server <version> web [logLevel]
+[port] [listenOnAllInterfaces]` to serve the ws-scrcpy browser client
+directly over WebSocket, like the NetrisTV fork of scrcpy 1.19 did.
+
+Each stream reuses the regular pipeline (ScreenCapture or NewDisplayCapture,
+SurfaceEncoder, Controller) and is shared by all the clients watching the
+same display. A stream may create a new virtual display (displayId -1),
+optionally resized by the client (flex display), and keep the device
+active. The device audio is captured once (raw PCM) for the clients
+which enable it.
+
+Upstream changes are kept minimal:
+ - Streamer: optional Sink instead of a file descriptor
+ - ControlChannel: may be subclassed
+ - SurfaceEncoder: encoding settings can be changed without releasing
+   the capture (keeps a new virtual display alive)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ server/build.gradle                           |   3 +-
+ .../java/com/genymobile/scrcpy/Server.java    |   7 +
+ .../scrcpy/control/ControlChannel.java        |  10 +-
+ .../genymobile/scrcpy/device/Streamer.java    |  52 ++-
+ .../scrcpy/video/SurfaceEncoder.java          |  64 ++-
+ .../com/genymobile/scrcpy/ws/WsAudio.java     | 108 +++++
+ .../scrcpy/ws/WsControlChannel.java           |  72 +++
+ .../com/genymobile/scrcpy/ws/WsFilePush.java  | 192 ++++++++
+ .../com/genymobile/scrcpy/ws/WsServer.java    | 421 ++++++++++++++++++
+ .../com/genymobile/scrcpy/ws/WsStream.java    | 325 ++++++++++++++
+ .../genymobile/scrcpy/ws/WsVideoSettings.java | 288 ++++++++++++
+ 11 files changed, 1527 insertions(+), 15 deletions(-)
+ create mode 100644 server/src/main/java/com/genymobile/scrcpy/ws/WsAudio.java
+ create mode 100644 server/src/main/java/com/genymobile/scrcpy/ws/WsControlChannel.java
+ create mode 100644 server/src/main/java/com/genymobile/scrcpy/ws/WsFilePush.java
+ create mode 100644 server/src/main/java/com/genymobile/scrcpy/ws/WsServer.java
+ create mode 100644 server/src/main/java/com/genymobile/scrcpy/ws/WsStream.java
+ create mode 100644 server/src/main/java/com/genymobile/scrcpy/ws/WsVideoSettings.java
+
+diff --git a/server/build.gradle b/server/build.gradle
+index 333f64d..8506edb 100644
+--- a/server/build.gradle
++++ b/server/build.gradle
+@@ -8,7 +8,7 @@ android {
+         minSdkVersion 21
+         targetSdkVersion 36
+         versionCode 50001
+-        versionName "5.0.1"
++        versionName "5.0.1-ws2"
+         testInstrumentationRunner = "android.support.test.runner.AndroidJUnitRunner"
+     }
+     buildTypes {
+@@ -26,6 +26,7 @@ android {
+ }
+ 
+ dependencies {
++    implementation 'org.java-websocket:Java-WebSocket:1.6.0'
+     testImplementation 'junit:junit:4.13.2'
+ }
+ 
+diff --git a/server/src/main/java/com/genymobile/scrcpy/Server.java b/server/src/main/java/com/genymobile/scrcpy/Server.java
+index d7d1a76..acba173 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/Server.java
++++ b/server/src/main/java/com/genymobile/scrcpy/Server.java
+@@ -23,6 +23,7 @@ import com.genymobile.scrcpy.video.ScreenCapture;
+ import com.genymobile.scrcpy.video.SurfaceCapture;
+ import com.genymobile.scrcpy.video.SurfaceEncoder;
+ import com.genymobile.scrcpy.video.VideoSource;
++import com.genymobile.scrcpy.ws.WsServer;
+ 
+ import android.annotation.SuppressLint;
+ import android.os.Build;
+@@ -237,6 +238,12 @@ public final class Server {
+ 
+         prepareMainLooper();
+ 
++        if (args.length > 1 && WsServer.SERVER_TYPE.equals(args[1])) {
++            // ws-scrcpy: serve the browsers directly over WebSocket
++            WsServer.run(args);
++            return;
++        }
++
+         Options options = Options.parse(args);
+ 
+         Ln.disableSystemStreams();
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlChannel.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlChannel.java
+index 2f12cdb..9a839aa 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/ControlChannel.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlChannel.java
+@@ -4,7 +4,7 @@ import android.net.LocalSocket;
+ 
+ import java.io.IOException;
+ 
+-public final class ControlChannel {
++public class ControlChannel {
+ 
+     private final ControlMessageReader reader;
+     private final DeviceMessageWriter writer;
+@@ -14,6 +14,14 @@ public final class ControlChannel {
+         writer = new DeviceMessageWriter(controlSocket.getOutputStream());
+     }
+ 
++    /**
++     * For subclasses which do not read from or write to a socket (the WebSocket server).
++     */
++    protected ControlChannel() {
++        reader = null;
++        writer = null;
++    }
++
+     public ControlMessage recv() throws IOException {
+         return reader.read();
+     }
+diff --git a/server/src/main/java/com/genymobile/scrcpy/device/Streamer.java b/server/src/main/java/com/genymobile/scrcpy/device/Streamer.java
+index e793f67..0817292 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/device/Streamer.java
++++ b/server/src/main/java/com/genymobile/scrcpy/device/Streamer.java
+@@ -18,7 +18,19 @@ public final class Streamer {
+     private static final long PACKET_FLAG_CONFIG = 1L << 62;
+     private static final long PACKET_FLAG_KEY_FRAME = 1L << 61;
+ 
++    /**
++     * Alternative output for the packets (used by the WebSocket server instead of a socket file descriptor).
++     */
++    public interface Sink {
++        void write(ByteBuffer buffer) throws IOException;
++
++        void onSessionStarted(int width, int height, boolean isClientResize);
++
++        void onStreamDisabled(boolean error);
++    }
++
+     private final FileDescriptor fd;
++    private final Sink sink;
+     private final Codec codec;
+     private final boolean sendStreamMeta;
+     private final boolean sendFrameMeta;
+@@ -26,12 +38,29 @@ public final class Streamer {
+     private final ByteBuffer headerBuffer = ByteBuffer.allocate(12);
+ 
+     public Streamer(FileDescriptor fd, Codec codec, boolean sendCodecMeta, boolean sendFrameMeta) {
++        this(fd, null, codec, sendCodecMeta, sendFrameMeta);
++    }
++
++    public Streamer(Sink sink, Codec codec, boolean sendCodecMeta, boolean sendFrameMeta) {
++        this(null, sink, codec, sendCodecMeta, sendFrameMeta);
++    }
++
++    private Streamer(FileDescriptor fd, Sink sink, Codec codec, boolean sendCodecMeta, boolean sendFrameMeta) {
+         this.fd = fd;
++        this.sink = sink;
+         this.codec = codec;
+         this.sendStreamMeta = sendCodecMeta;
+         this.sendFrameMeta = sendFrameMeta;
+     }
+ 
++    private void writeFully(ByteBuffer buffer) throws IOException {
++        if (sink != null) {
++            sink.write(buffer);
++        } else {
++            IO.writeFully(fd, buffer);
++        }
++    }
++
+     public Codec getCodec() {
+         return codec;
+     }
+@@ -41,7 +70,7 @@ public final class Streamer {
+             ByteBuffer buffer = ByteBuffer.allocate(4);
+             buffer.putInt(codec.getId());
+             buffer.flip();
+-            IO.writeFully(fd, buffer);
++            writeFully(buffer);
+         }
+     }
+ 
+@@ -50,7 +79,7 @@ public final class Streamer {
+             ByteBuffer buffer = ByteBuffer.allocate(4);
+             buffer.putInt(codec.getId());
+             buffer.flip();
+-            IO.writeFully(fd, buffer);
++            writeFully(buffer);
+         }
+     }
+ 
+@@ -58,11 +87,15 @@ public final class Streamer {
+         // Writing a specific code as codec-id means that the device disables the stream
+         //   code 0: it explicitly disables the stream (because it could not capture audio), scrcpy should continue mirroring video only
+         //   code 1: a configuration error occurred, scrcpy must be stopped
++        if (sink != null) {
++            sink.onStreamDisabled(error);
++            return;
++        }
+         byte[] code = new byte[4];
+         if (error) {
+             code[3] = 1;
+         }
+-        IO.writeFully(fd, code, 0, code.length);
++        writeFully(ByteBuffer.wrap(code));
+     }
+ 
+     public void writePacket(ByteBuffer buffer, long pts, boolean config, boolean keyFrame) throws IOException {
+@@ -75,10 +108,10 @@ public final class Streamer {
+         }
+ 
+         if (sendFrameMeta) {
+-            writeFrameMeta(fd, buffer.remaining(), pts, config, keyFrame);
++            writeFrameMeta(buffer.remaining(), pts, config, keyFrame);
+         }
+ 
+-        IO.writeFully(fd, buffer);
++        writeFully(buffer);
+     }
+ 
+     public void writePacket(ByteBuffer codecBuffer, MediaCodec.BufferInfo bufferInfo) throws IOException {
+@@ -89,6 +122,9 @@ public final class Streamer {
+     }
+ 
+     public void writeSessionMeta(int width, int height, boolean isClientResize) throws IOException {
++        if (sink != null) {
++            sink.onSessionStarted(width, height, isClientResize);
++        }
+         if (sendStreamMeta) {
+             headerBuffer.clear();
+ 
+@@ -100,11 +136,11 @@ public final class Streamer {
+             headerBuffer.putInt(width);
+             headerBuffer.putInt(height);
+             headerBuffer.flip();
+-            IO.writeFully(fd, headerBuffer);
++            writeFully(headerBuffer);
+         }
+     }
+ 
+-    private void writeFrameMeta(FileDescriptor fd, int packetSize, long pts, boolean config, boolean keyFrame) throws IOException {
++    private void writeFrameMeta(int packetSize, long pts, boolean config, boolean keyFrame) throws IOException {
+         headerBuffer.clear();
+ 
+         long ptsAndFlags;
+@@ -120,7 +156,7 @@ public final class Streamer {
+         headerBuffer.putLong(ptsAndFlags);
+         headerBuffer.putInt(packetSize);
+         headerBuffer.flip();
+-        IO.writeFully(fd, headerBuffer);
++        writeFully(headerBuffer);
+     }
+ 
+     private static void fixOpusConfigPacket(ByteBuffer buffer) throws IOException {
+diff --git a/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java b/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java
+index 539681b..60a17f3 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java
++++ b/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java
+@@ -38,11 +38,14 @@ public class SurfaceEncoder implements AsyncProcessor {
+ 
+     private final SurfaceCapture capture;
+     private final Streamer streamer;
+-    private final String encoderName;
+-    private final List<CodecOption> codecOptions;
+-    private final int videoBitRate;
+-    private final int maxSize;
+-    private final float maxFps;
++    private String encoderName;
++    private List<CodecOption> codecOptions;
++    private int videoBitRate;
++    private int maxSize;
++    private float maxFps;
++
++    // Settings to apply on the next capture reset (see updateSettings())
++    private Settings pendingSettings;
+     private final boolean downsizeOnError;
+     private final int minSizeAlignment;
+     private final boolean ignoreVideoEncoderConstraints;
+@@ -70,6 +73,38 @@ public class SurfaceEncoder implements AsyncProcessor {
+         this.ignoreVideoEncoderConstraints = options.getIgnoreVideoEncoderConstraints();
+     }
+ 
++    private static final class Settings {
++        private final int videoBitRate;
++        private final int maxSize;
++        private final float maxFps;
++        private final List<CodecOption> codecOptions;
++        private final String encoderName;
++
++        private Settings(int videoBitRate, int maxSize, float maxFps, List<CodecOption> codecOptions, String encoderName) {
++            this.videoBitRate = videoBitRate;
++            this.maxSize = maxSize;
++            this.maxFps = maxFps;
++            this.codecOptions = codecOptions;
++            this.encoderName = encoderName;
++        }
++    }
++
++    /**
++     * Change the encoding settings without releasing the capture (a new virtual display is kept alive).
++     */
++    public void updateSettings(int videoBitRate, int maxSize, float maxFps, List<CodecOption> codecOptions, String encoderName) {
++        synchronized (this) {
++            pendingSettings = new Settings(videoBitRate, maxSize, maxFps, codecOptions, encoderName);
++        }
++        captureControl.reset(CaptureControl.RESET_REASON_CLIENT_RESET);
++    }
++
++    private synchronized Settings consumePendingSettings() {
++        Settings settings = pendingSettings;
++        pendingSettings = null;
++        return settings;
++    }
++
+     private void streamCapture() throws IOException, ConfigurationException {
+         Codec codec = streamer.getCodec();
+         MediaCodec mediaCodec = createMediaCodec(codec, encoderName);
+@@ -114,6 +149,25 @@ public class SurfaceEncoder implements AsyncProcessor {
+                     retainedResetReasons = 0;
+                 }
+ 
++                Settings settings = consumePendingSettings();
++                if (settings != null) {
++                    boolean encoderChanged = settings.encoderName == null ? encoderName != null : !settings.encoderName.equals(encoderName);
++                    videoBitRate = settings.videoBitRate;
++                    maxFps = settings.maxFps;
++                    codecOptions = settings.codecOptions;
++                    encoderName = settings.encoderName;
++                    if (encoderChanged) {
++                        mediaCodec.release();
++                        mediaCodec = createMediaCodec(codec, encoderName);
++                    }
++                    format = createFormat(codec.getMimeType(), videoBitRate, maxFps, codecOptions);
++                    if (settings.maxSize != maxSize) {
++                        maxSize = settings.maxSize;
++                        videoConstraints = videoConstraints.withMaxSize(maxSize);
++                        capture.applyNewVideoConstraints(videoConstraints);
++                    }
++                }
++
+                 capture.prepare();
+                 Size size = capture.getSize();
+ 
+diff --git a/server/src/main/java/com/genymobile/scrcpy/ws/WsAudio.java b/server/src/main/java/com/genymobile/scrcpy/ws/WsAudio.java
+new file mode 100644
+index 0000000..48f3ec7
+--- /dev/null
++++ b/server/src/main/java/com/genymobile/scrcpy/ws/WsAudio.java
+@@ -0,0 +1,108 @@
++package com.genymobile.scrcpy.ws;
++
++import com.genymobile.scrcpy.AsyncProcessor;
++import com.genymobile.scrcpy.audio.AudioCapture;
++import com.genymobile.scrcpy.audio.AudioCodec;
++import com.genymobile.scrcpy.audio.AudioDirectCapture;
++import com.genymobile.scrcpy.audio.AudioPlaybackCapture;
++import com.genymobile.scrcpy.audio.AudioRawRecorder;
++import com.genymobile.scrcpy.audio.AudioSource;
++import com.genymobile.scrcpy.device.Streamer;
++import com.genymobile.scrcpy.util.Ln;
++
++import org.java_websocket.WebSocket;
++
++import java.nio.ByteBuffer;
++import java.nio.charset.StandardCharsets;
++import java.util.Set;
++import java.util.concurrent.CopyOnWriteArraySet;
++import java.util.concurrent.atomic.AtomicReference;
++
++/**
++ * The device audio output, captured once and sent to all the clients which enabled the audio.
++ * <p>
++ * Packets are raw PCM (48 kHz, stereo, signed 16-bit little-endian), prefixed by {@link #MAGIC_BYTES_AUDIO}. A prefix alone (without
++ * samples) means that the audio could not be captured.
++ */
++public final class WsAudio implements Streamer.Sink {
++
++    static final byte[] MAGIC_BYTES_AUDIO = "scrcpy_audio__".getBytes(StandardCharsets.UTF_8);
++
++    // Read by the recorder thread without locking (it may be joined by start() while holding the monitor)
++    private final Set<WebSocket> sockets = new CopyOnWriteArraySet<>();
++    // Not guarded by the monitor: the recorder thread clears it on termination (while start() may be joining it)
++    private final AtomicReference<AsyncProcessor> recorder = new AtomicReference<>();
++    private AsyncProcessor stoppedRecorder;
++
++    /**
++     * @param duplicate keep playing the audio on the device (Android 13+); only applied if the capture is not already running
++     */
++    public synchronized void join(WebSocket webSocket, boolean duplicate) {
++        sockets.add(webSocket);
++        if (recorder.get() == null) {
++            start(duplicate);
++        }
++    }
++
++    public synchronized void leave(WebSocket webSocket) {
++        if (sockets.remove(webSocket) && sockets.isEmpty()) {
++            AsyncProcessor running = recorder.getAndSet(null);
++            if (running != null) {
++                Ln.d("Last audio client left");
++                running.stop();
++                stoppedRecorder = running;
++            }
++        }
++    }
++
++    private void start(boolean duplicate) {
++        if (stoppedRecorder != null) {
++            // Only one capture of the audio output at a time
++            try {
++                stoppedRecorder.join();
++            } catch (InterruptedException e) {
++                Thread.currentThread().interrupt();
++            }
++            stoppedRecorder = null;
++        }
++        AudioCapture capture = duplicate ? new AudioPlaybackCapture(true) : new AudioDirectCapture(AudioSource.OUTPUT);
++        Streamer streamer = new Streamer(this, AudioCodec.RAW, false, false);
++        AudioRawRecorder audioRecorder = new AudioRawRecorder(capture, streamer);
++        recorder.set(audioRecorder);
++        audioRecorder.start((fatalError) -> onTerminated(audioRecorder));
++    }
++
++    private void onTerminated(AsyncProcessor terminated) {
++        if (recorder.compareAndSet(terminated, null)) {
++            Ln.w("Audio capture stopped");
++        }
++    }
++
++    private void broadcast(ByteBuffer samples) {
++        ByteBuffer message = ByteBuffer.allocate(MAGIC_BYTES_AUDIO.length + samples.remaining());
++        message.put(MAGIC_BYTES_AUDIO);
++        message.put(samples);
++        message.flip();
++        for (WebSocket webSocket : sockets) {
++            if (webSocket.isOpen()) {
++                webSocket.send(message.duplicate());
++            }
++        }
++    }
++
++    @Override
++    public void write(ByteBuffer buffer) {
++        broadcast(buffer);
++    }
++
++    @Override
++    public void onSessionStarted(int width, int height, boolean isClientResize) {
++        // video only
++    }
++
++    @Override
++    public void onStreamDisabled(boolean error) {
++        Ln.w("Audio capture is not available");
++        broadcast(ByteBuffer.allocate(0));
++    }
++}
+diff --git a/server/src/main/java/com/genymobile/scrcpy/ws/WsControlChannel.java b/server/src/main/java/com/genymobile/scrcpy/ws/WsControlChannel.java
+new file mode 100644
+index 0000000..eb7be32
+--- /dev/null
++++ b/server/src/main/java/com/genymobile/scrcpy/ws/WsControlChannel.java
+@@ -0,0 +1,72 @@
++package com.genymobile.scrcpy.ws;
++
++import com.genymobile.scrcpy.control.ControlChannel;
++import com.genymobile.scrcpy.control.ControlMessage;
++import com.genymobile.scrcpy.control.ControlMessageReader;
++import com.genymobile.scrcpy.control.DeviceMessage;
++import com.genymobile.scrcpy.control.DeviceMessageWriter;
++import com.genymobile.scrcpy.util.Ln;
++
++import java.io.ByteArrayInputStream;
++import java.io.ByteArrayOutputStream;
++import java.io.IOException;
++import java.io.InterruptedIOException;
++import java.nio.ByteBuffer;
++import java.util.concurrent.BlockingQueue;
++import java.util.concurrent.LinkedBlockingQueue;
++
++/**
++ * Control channel fed by WebSocket messages: each WebSocket message holds exactly one control message.
++ */
++public final class WsControlChannel extends ControlChannel {
++
++    public interface Output {
++        void sendDeviceMessage(ByteBuffer message);
++    }
++
++    private static final byte[] CLOSED = new byte[0];
++
++    private final BlockingQueue<byte[]> queue = new LinkedBlockingQueue<>();
++    private final Output output;
++
++    public WsControlChannel(Output output) {
++        this.output = output;
++    }
++
++    public void push(byte[] message) {
++        queue.offer(message);
++    }
++
++    public void close() {
++        queue.offer(CLOSED);
++    }
++
++    @Override
++    public ControlMessage recv() throws IOException {
++        while (true) {
++            byte[] message;
++            try {
++                message = queue.take();
++            } catch (InterruptedException e) {
++                throw new InterruptedIOException();
++            }
++            if (message == CLOSED) {
++                throw new IOException("Control channel closed");
++            }
++            // Parse each message independently, so that a malformed message cannot desynchronize the following ones
++            try {
++                return new ControlMessageReader(new ByteArrayInputStream(message)).read();
++            } catch (IOException e) {
++                Ln.w("Invalid control message (type " + (message.length > 0 ? message[0] : -1) + "): " + e);
++            }
++        }
++    }
++
++    @Override
++    public void send(DeviceMessage msg) throws IOException {
++        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
++        bytes.write(WsServer.MAGIC_BYTES_MESSAGE);
++        new DeviceMessageWriter(bytes).write(msg);
++        output.sendDeviceMessage(ByteBuffer.wrap(bytes.toByteArray()));
++    }
++}
+diff --git a/server/src/main/java/com/genymobile/scrcpy/ws/WsFilePush.java b/server/src/main/java/com/genymobile/scrcpy/ws/WsFilePush.java
+new file mode 100644
+index 0000000..4cd0516
+--- /dev/null
++++ b/server/src/main/java/com/genymobile/scrcpy/ws/WsFilePush.java
+@@ -0,0 +1,192 @@
++package com.genymobile.scrcpy.ws;
++
++import com.genymobile.scrcpy.util.Ln;
++
++import org.java_websocket.WebSocket;
++
++import java.io.File;
++import java.io.FileOutputStream;
++import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.Map;
++
++/**
++ * Upload of files dropped on the stream to /data/local/tmp (ported from the ws-scrcpy fork of scrcpy 1.19).
++ */
++public final class WsFilePush {
++
++    private static final int TYPE_PUSH_RESPONSE = 101;
++
++    private static final int STATE_NEW = 0;
++    private static final int STATE_START = 1;
++    private static final int STATE_APPEND = 2;
++    private static final int STATE_FINISH = 3;
++    private static final int STATE_CANCEL = 4;
++
++    private static final int NEW_PUSH_ID = 1;
++    private static final int NO_ERROR = 0;
++    private static final int ERROR_INVALID_NAME = -1;
++    private static final int ERROR_FAILED_TO_DELETE = -3;
++    private static final int ERROR_FAILED_TO_CREATE = -4;
++    private static final int ERROR_FAILED_TO_WRITE = -6;
++    private static final int ERROR_FILE_IS_BUSY = -7;
++    private static final int ERROR_INVALID_STATE = -8;
++    private static final int ERROR_UNKNOWN_ID = -9;
++    private static final int ERROR_NO_FREE_ID = -10;
++    private static final int ERROR_INCORRECT_SIZE = -11;
++
++    private static final String PUSH_PATH = "/data/local/tmp";
++
++    private static final class Push {
++        private final short id;
++        private final String fileName;
++        private final long fileSize;
++        private final FileOutputStream stream;
++        private final WebSocket conn;
++        private long processedBytes;
++
++        Push(short id, String fileName, long fileSize, FileOutputStream stream, WebSocket conn) {
++            this.id = id;
++            this.fileName = fileName;
++            this.fileSize = fileSize;
++            this.stream = stream;
++            this.conn = conn;
++        }
++    }
++
++    private static final Map<Short, Push> PUSHES_BY_ID = new HashMap<>();
++    private static final Map<String, Push> PUSHES_BY_NAME = new HashMap<>();
++    private static short nextPushId;
++
++    private WsFilePush() {
++        // not instantiable
++    }
++
++    private static void respond(WebSocket conn, short id, int result) {
++        ByteBuffer buffer = ByteBuffer.allocate(WsServer.MAGIC_BYTES_MESSAGE.length + 4);
++        buffer.put(WsServer.MAGIC_BYTES_MESSAGE);
++        buffer.put((byte) TYPE_PUSH_RESPONSE);
++        buffer.putShort(id);
++        buffer.put((byte) result);
++        buffer.flip();
++        conn.send(buffer);
++    }
++
++    private static short getNextPushId() {
++        short start = nextPushId;
++        do {
++            nextPushId = (short) (nextPushId == Short.MAX_VALUE ? 1 : nextPushId + 1);
++            if (!PUSHES_BY_ID.containsKey(nextPushId)) {
++                return nextPushId;
++            }
++        } while (nextPushId != start);
++        return -1;
++    }
++
++    private static void release(Push push) {
++        PUSHES_BY_ID.remove(push.id);
++        PUSHES_BY_NAME.remove(push.fileName);
++        try {
++            push.stream.close();
++        } catch (IOException e) {
++            Ln.w("Failed to close file \"" + push.fileName + "\"");
++        }
++    }
++
++    public static synchronized void cancelAllForConnection(WebSocket conn) {
++        for (Push push : new ArrayList<>(PUSHES_BY_ID.values())) {
++            if (push.conn == conn) {
++                release(push);
++            }
++        }
++    }
++
++    /**
++     * @param data the message, after the type byte
++     */
++    public static synchronized void handle(WebSocket conn, ByteBuffer data) {
++        short id = data.getShort();
++        int state = data.get();
++        switch (state) {
++            case STATE_NEW:
++                short newId = getNextPushId();
++                respond(conn, newId, newId == -1 ? ERROR_NO_FREE_ID : NEW_PUSH_ID);
++                return;
++            case STATE_START:
++                int fileSize = data.getInt();
++                byte[] name = new byte[data.getShort() & 0xffff];
++                data.get(name);
++                start(conn, id, new String(name, StandardCharsets.UTF_8), fileSize);
++                return;
++            default:
++                break;
++        }
++
++        Push push = PUSHES_BY_ID.get(id);
++        if (push == null) {
++            respond(conn, id, ERROR_UNKNOWN_ID);
++            return;
++        }
++        switch (state) {
++            case STATE_APPEND:
++                int length = data.getInt();
++                if (data.remaining() < length) {
++                    release(push);
++                    respond(conn, id, ERROR_INCORRECT_SIZE);
++                    return;
++                }
++                byte[] chunk = new byte[length];
++                data.get(chunk);
++                try {
++                    push.stream.write(chunk);
++                    push.processedBytes += length;
++                    respond(conn, id, NO_ERROR);
++                } catch (IOException e) {
++                    release(push);
++                    respond(conn, id, ERROR_FAILED_TO_WRITE);
++                }
++                return;
++            case STATE_FINISH:
++                release(push);
++                respond(conn, id, push.processedBytes == push.fileSize ? NO_ERROR : ERROR_INCORRECT_SIZE);
++                return;
++            case STATE_CANCEL:
++                release(push);
++                respond(conn, id, NO_ERROR);
++                return;
++            default:
++                respond(conn, id, ERROR_INVALID_STATE);
++        }
++    }
++
++    private static void start(WebSocket conn, short id, String fileName, long fileSize) {
++        if (PUSHES_BY_NAME.containsKey(fileName)) {
++            respond(conn, id, ERROR_FILE_IS_BUSY);
++            return;
++        }
++        if (fileName.isEmpty() || fileName.contains("/")) {
++            respond(conn, id, ERROR_INVALID_NAME);
++            return;
++        }
++        File file = new File(PUSH_PATH, fileName);
++        // The client asked to upload this file: replace any previous file with the same name
++        if (file.exists() && !file.delete()) {
++            respond(conn, id, ERROR_FAILED_TO_DELETE);
++            return;
++        }
++        FileOutputStream stream;
++        try {
++            stream = new FileOutputStream(file);
++        } catch (IOException e) {
++            respond(conn, id, ERROR_FAILED_TO_CREATE);
++            return;
++        }
++        Push push = new Push(id, fileName, fileSize, stream, conn);
++        PUSHES_BY_ID.put(id, push);
++        PUSHES_BY_NAME.put(fileName, push);
++        respond(conn, id, NO_ERROR);
++    }
++}
+diff --git a/server/src/main/java/com/genymobile/scrcpy/ws/WsServer.java b/server/src/main/java/com/genymobile/scrcpy/ws/WsServer.java
+new file mode 100644
+index 0000000..192fdb1
+--- /dev/null
++++ b/server/src/main/java/com/genymobile/scrcpy/ws/WsServer.java
+@@ -0,0 +1,421 @@
++package com.genymobile.scrcpy.ws;
++
++import com.genymobile.scrcpy.BuildConfig;
++import com.genymobile.scrcpy.Workarounds;
++import com.genymobile.scrcpy.device.Device;
++import com.genymobile.scrcpy.display.DisplayInfo;
++import com.genymobile.scrcpy.util.CodecUtils;
++import com.genymobile.scrcpy.util.Ln;
++import com.genymobile.scrcpy.video.VideoCodec;
++import com.genymobile.scrcpy.wrappers.ServiceManager;
++
++import android.media.MediaCodecInfo;
++import android.media.MediaCodecList;
++import android.os.Looper;
++
++import org.java_websocket.WebSocket;
++import org.java_websocket.framing.CloseFrame;
++import org.java_websocket.handshake.ClientHandshake;
++import org.java_websocket.server.WebSocketServer;
++
++import java.io.ByteArrayOutputStream;
++import java.io.DataOutputStream;
++import java.io.File;
++import java.io.FileOutputStream;
++import java.io.IOException;
++import java.net.BindException;
++import java.net.InetSocketAddress;
++import java.nio.ByteBuffer;
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * WebSocket server for ws-scrcpy: the browsers connect directly (or through an adb forward) to the device.
++ * <p>
++ * Started as: {@code app_process / com.genymobile.scrcpy.Server <version> web [logLevel] [port] [listenOnAllInterfaces]}
++ */
++public final class WsServer extends WebSocketServer {
++
++    public static final String SERVER_TYPE = "web";
++
++    static final byte[] MAGIC_BYTES_INITIAL = "scrcpy_initial".getBytes(StandardCharsets.UTF_8);
++    static final byte[] MAGIC_BYTES_MESSAGE = "scrcpy_message".getBytes(StandardCharsets.UTF_8);
++
++    private static final int TYPE_CHANGE_STREAM_PARAMETERS = 101;
++    private static final int TYPE_PUSH_FILE = 102;
++    // payload: enabled (uint8), keep playing on the device (uint8)
++    private static final int TYPE_SET_AUDIO = 103;
++
++    private static final int DEVICE_NAME_FIELD_LENGTH = 64;
++    private static final String PID_FILE_PATH = "/data/local/tmp/ws_scrcpy.pid";
++    private static final int DEFAULT_PORT = 8886;
++    private static final int FLAG_PRIVATE = android.view.Display.FLAG_PRIVATE;
++
++    private static final class Client {
++        private final short id;
++        private WsStream stream;
++
++        Client(short id) {
++            this.id = id;
++        }
++    }
++
++    private final Ln.Level logLevel;
++    private final Object lock = new Object();
++    private final Set<Short> clientIds = new HashSet<>();
++    // Running streams by display id (a new virtual display is added once its id is known)
++    private final Map<Integer, WsStream> streams = new HashMap<>();
++    // All running streams, including new virtual displays not created yet
++    private final Set<WsStream> allStreams = new HashSet<>();
++    private final WsAudio audio = new WsAudio();
++
++    private WsServer(InetSocketAddress address, Ln.Level logLevel) {
++        super(address);
++        this.logLevel = logLevel;
++    }
++
++    public static void run(String... args) {
++        String clientVersion = args[0];
++        if (!clientVersion.equals(BuildConfig.VERSION_NAME)) {
++            throw new IllegalArgumentException(
++                    "The server version (" + BuildConfig.VERSION_NAME + ") does not match the client " + "(" + clientVersion + ")");
++        }
++        Ln.Level level = args.length > 2 ? Ln.Level.valueOf(args[2].toUpperCase(Locale.ENGLISH)) : Ln.Level.ERROR;
++        int port = args.length > 3 ? Integer.parseInt(args[3]) : DEFAULT_PORT;
++        boolean listenOnAllInterfaces = args.length <= 4 || Boolean.parseBoolean(args[4]);
++
++        Ln.disableSystemStreams();
++        Ln.initLogLevel(level);
++
++        Workarounds.apply();
++        // The clipboard manager must be created from the main thread
++        ServiceManager.getClipboardManager();
++
++        unlinkPidFile();
++        WsServer server = new WsServer(new InetSocketAddress(listenOnAllInterfaces ? "0.0.0.0" : "127.0.0.1", port), level);
++        server.setReuseAddr(true);
++        server.start();
++
++        // Some capture and control callbacks are posted to the main looper
++        Looper.loop();
++    }
++
++    @Override
++    public void onStart() {
++        Ln.i("WebSocket server started on " + getAddress());
++        setConnectionLostTimeout(100);
++        writePidFile();
++    }
++
++    @Override
++    public void onOpen(WebSocket webSocket, ClientHandshake handshake) {
++        short id;
++        synchronized (lock) {
++            id = getNextClientId();
++            if (id == -1) {
++                webSocket.close(CloseFrame.TRY_AGAIN_LATER);
++                return;
++            }
++            clientIds.add(id);
++        }
++        webSocket.setAttachment(new Client(id));
++        sendInitialInfo(webSocket, buildInitialInfo());
++    }
++
++    private short getNextClientId() {
++        for (short id = 1; id < Short.MAX_VALUE; ++id) {
++            if (!clientIds.contains(id)) {
++                return id;
++            }
++        }
++        return -1;
++    }
++
++    @Override
++    public void onClose(WebSocket webSocket, int code, String reason, boolean remote) {
++        WsFilePush.cancelAllForConnection(webSocket);
++        audio.leave(webSocket);
++        Client client = webSocket.getAttachment();
++        if (client == null) {
++            return;
++        }
++        synchronized (lock) {
++            clientIds.remove(client.id);
++            if (client.stream != null) {
++                leaveStream(webSocket, client.stream);
++                client.stream = null;
++            }
++        }
++        broadcastInitialInfo();
++    }
++
++    @Override
++    public void onMessage(WebSocket webSocket, String message) {
++        Ln.w("Unexpected text message: \"" + message + "\"");
++    }
++
++    @Override
++    public void onMessage(WebSocket webSocket, ByteBuffer message) {
++        Client client = webSocket.getAttachment();
++        if (client == null || !message.hasRemaining()) {
++            return;
++        }
++        int type = message.get(message.position()) & 0xff;
++        try {
++            if (type == TYPE_CHANGE_STREAM_PARAMETERS) {
++                message.get();
++                changeStreamParameters(webSocket, client, WsVideoSettings.fromBuffer(message));
++                return;
++            }
++            if (type == TYPE_PUSH_FILE) {
++                message.get();
++                WsFilePush.handle(webSocket, message);
++                return;
++            }
++            if (type == TYPE_SET_AUDIO) {
++                message.get();
++                boolean enabled = message.get() != 0;
++                boolean duplicate = message.hasRemaining() && message.get() != 0;
++                if (enabled) {
++                    audio.join(webSocket, duplicate);
++                } else {
++                    audio.leave(webSocket);
++                }
++                return;
++            }
++        } catch (RuntimeException e) {
++            Ln.e("Could not handle message (type " + type + ")", e);
++            return;
++        }
++        WsStream stream;
++        synchronized (lock) {
++            stream = client.stream;
++        }
++        if (stream != null) {
++            byte[] bytes = new byte[message.remaining()];
++            message.get(bytes);
++            stream.pushControlMessage(bytes);
++        }
++    }
++
++    private void changeStreamParameters(WebSocket webSocket, Client client, WsVideoSettings settings) {
++        Ln.d("Client " + client.id + " requests " + settings);
++        synchronized (lock) {
++            WsStream target = settings.isNewDisplay() ? null : streams.get(settings.getDisplayId());
++            if (client.stream != null && client.stream != target) {
++                leaveStream(webSocket, client.stream);
++                client.stream = null;
++            }
++            if (target != null && target.getSettings().requiresNewCapture(settings)) {
++                // For example the orientation lock changed: recreate the stream with the same clients
++                List<WebSocket> others = target.getSockets();
++                removeStream(target);
++                target = createStream(settings);
++                if (target != null) {
++                    for (WebSocket other : others) {
++                        target.join(other);
++                        Client otherClient = other.getAttachment();
++                        if (otherClient != null) {
++                            otherClient.stream = target;
++                        }
++                    }
++                }
++            } else if (target == null) {
++                target = createStream(settings);
++            } else if (!target.getSettings().equals(settings)) {
++                target.updateSettings(settings);
++            } else if (client.stream == target) {
++                // The client repeats its request until it receives the screen info: nothing to do (restarting the encoder here would
++                // delay the screen info forever)
++                return;
++            } else {
++                // A new client needs the codec configuration and a key frame
++                target.requestKeyFrame();
++            }
++            if (target != null) {
++                target.join(webSocket);
++                client.stream = target;
++            }
++        }
++        broadcastInitialInfo();
++    }
++
++    private WsStream createStream(WsVideoSettings settings) {
++        WsStream stream;
++        try {
++            stream = new WsStream(this, settings, logLevel);
++        } catch (RuntimeException e) {
++            Ln.e("Could not create stream for " + settings, e);
++            return null;
++        }
++        allStreams.add(stream);
++        if (!settings.isNewDisplay()) {
++            streams.put(settings.getDisplayId(), stream);
++        }
++        stream.start();
++        return stream;
++    }
++
++    private void leaveStream(WebSocket webSocket, WsStream stream) {
++        if (stream.leave(webSocket)) {
++            Ln.d("Last client left display " + stream.getDisplayId());
++            removeStream(stream);
++        }
++    }
++
++    private void removeStream(WsStream stream) {
++        allStreams.remove(stream);
++        if (streams.get(stream.getDisplayId()) == stream) {
++            streams.remove(stream.getDisplayId());
++        }
++        stream.release();
++    }
++
++    void onVirtualDisplayCreated(WsStream stream) {
++        synchronized (lock) {
++            if (allStreams.contains(stream)) {
++                streams.put(stream.getDisplayId(), stream);
++            }
++        }
++        broadcastInitialInfo();
++    }
++
++    void onStreamTerminated(WsStream stream) {
++        List<WebSocket> sockets;
++        synchronized (lock) {
++            if (!allStreams.contains(stream)) {
++                return;
++            }
++            sockets = stream.getSockets();
++            removeStream(stream);
++            for (WebSocket webSocket : sockets) {
++                Client client = webSocket.getAttachment();
++                if (client != null) {
++                    client.stream = null;
++                }
++            }
++        }
++        for (WebSocket webSocket : sockets) {
++            webSocket.close(CloseFrame.UNEXPECTED_CONDITION, "Stream terminated, see adb logcat -s scrcpy");
++        }
++    }
++
++    @Override
++    public void onError(WebSocket webSocket, Exception ex) {
++        Ln.e("WebSocket error", ex);
++        if (webSocket != null) {
++            WsFilePush.cancelAllForConnection(webSocket);
++        }
++        if (ex instanceof BindException) {
++            System.exit(1);
++        }
++    }
++
++    void broadcastInitialInfo() {
++        byte[] initialInfo = buildInitialInfo();
++        for (WebSocket webSocket : getConnections()) {
++            sendInitialInfo(webSocket, initialInfo);
++        }
++    }
++
++    private void sendInitialInfo(WebSocket webSocket, byte[] initialInfo) {
++        Client client = webSocket.getAttachment();
++        if (client == null || !webSocket.isOpen()) {
++            return;
++        }
++        int joinedDisplayId;
++        synchronized (lock) {
++            joinedDisplayId = client.stream != null ? client.stream.getDisplayId() : Device.DISPLAY_ID_NONE;
++        }
++        ByteBuffer buffer = ByteBuffer.allocate(initialInfo.length + 8);
++        buffer.put(initialInfo);
++        buffer.putInt(client.id);
++        // Extension: the display of the stream joined by this client (the id of a new virtual display is assigned by the device)
++        buffer.putInt(joinedDisplayId);
++        buffer.flip();
++        webSocket.send(buffer);
++    }
++
++    /**
++     * Build the "initial info" message (without the client-specific trailer), parsed by src/app/client/StreamReceiver.ts.
++     */
++    private byte[] buildInitialInfo() {
++        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
++        DataOutputStream out = new DataOutputStream(bytes);
++        try {
++            out.write(MAGIC_BYTES_INITIAL);
++            byte[] name = new byte[DEVICE_NAME_FIELD_LENGTH];
++            byte[] deviceName = Device.getDeviceName().getBytes(StandardCharsets.UTF_8);
++            System.arraycopy(deviceName, 0, name, 0, Math.min(deviceName.length, DEVICE_NAME_FIELD_LENGTH - 1));
++            out.write(name);
++
++            List<DisplayInfo> displays = new ArrayList<>();
++            for (int displayId : ServiceManager.getDisplayManager().getDisplayIds()) {
++                DisplayInfo info = ServiceManager.getDisplayManager().getDisplayInfo(displayId);
++                // Skip private displays, like the ones created to mirror a display
++                if (info != null && (info.getFlags() & FLAG_PRIVATE) == 0) {
++                    displays.add(info);
++                }
++            }
++            out.writeInt(displays.size());
++            for (DisplayInfo info : displays) {
++                out.writeInt(info.getDisplayId());
++                out.writeInt(info.getSize().getWidth());
++                out.writeInt(info.getSize().getHeight());
++                out.writeInt(info.getRotation());
++                out.writeInt(info.getLayerStack());
++                out.writeInt(info.getFlags());
++
++                WsStream stream;
++                synchronized (lock) {
++                    stream = streams.get(info.getDisplayId());
++                }
++                byte[] screenInfo = stream != null ? stream.getScreenInfo() : null;
++                if (screenInfo == null) {
++                    out.writeInt(0); // connection count
++                    out.writeInt(0); // screen info length
++                    out.writeInt(0); // video settings length
++                } else {
++                    out.writeInt(stream.getConnectionCount());
++                    out.writeInt(screenInfo.length);
++                    out.write(screenInfo);
++                    byte[] videoSettings = stream.getSettings().toByteArray();
++                    out.writeInt(videoSettings.length);
++                    out.write(videoSettings);
++                }
++            }
++
++            MediaCodecInfo[] encoders = CodecUtils.getEncoders(new MediaCodecList(MediaCodecList.REGULAR_CODECS), VideoCodec.H264.getMimeType());
++            out.writeInt(encoders.length);
++            for (MediaCodecInfo encoder : encoders) {
++                byte[] encoderName = encoder.getName().getBytes(StandardCharsets.UTF_8);
++                out.writeInt(encoderName.length);
++                out.write(encoderName);
++            }
++        } catch (IOException e) {
++            throw new AssertionError(e);
++        }
++        return bytes.toByteArray();
++    }
++
++    private static void unlinkPidFile() {
++        File pidFile = new File(PID_FILE_PATH);
++        if (pidFile.exists() && !pidFile.delete()) {
++            Ln.e("Failed to delete PID file");
++        }
++    }
++
++    private static void writePidFile() {
++        try (FileOutputStream stream = new FileOutputStream(PID_FILE_PATH, false)) {
++            stream.write(Integer.toString(android.os.Process.myPid()).getBytes(StandardCharsets.UTF_8));
++        } catch (IOException e) {
++            Ln.e("Failed to write PID file", e);
++        }
++    }
++}
+diff --git a/server/src/main/java/com/genymobile/scrcpy/ws/WsStream.java b/server/src/main/java/com/genymobile/scrcpy/ws/WsStream.java
+new file mode 100644
+index 0000000..70be0b4
+--- /dev/null
++++ b/server/src/main/java/com/genymobile/scrcpy/ws/WsStream.java
+@@ -0,0 +1,325 @@
++package com.genymobile.scrcpy.ws;
++
++import com.genymobile.scrcpy.BuildConfig;
++import com.genymobile.scrcpy.Options;
++import com.genymobile.scrcpy.control.ControlMessage;
++import com.genymobile.scrcpy.control.Controller;
++import com.genymobile.scrcpy.control.PositionMapper;
++import com.genymobile.scrcpy.device.Streamer;
++import com.genymobile.scrcpy.display.DisplayInfo;
++import com.genymobile.scrcpy.model.CodecOption;
++import com.genymobile.scrcpy.model.Size;
++import com.genymobile.scrcpy.util.Ln;
++import com.genymobile.scrcpy.video.CaptureControl;
++import com.genymobile.scrcpy.video.NewDisplayCapture;
++import com.genymobile.scrcpy.video.ScreenCapture;
++import com.genymobile.scrcpy.video.SurfaceCapture;
++import com.genymobile.scrcpy.video.SurfaceEncoder;
++import com.genymobile.scrcpy.video.VideoCodec;
++import com.genymobile.scrcpy.video.VirtualDisplayListener;
++import com.genymobile.scrcpy.wrappers.ServiceManager;
++
++import org.java_websocket.WebSocket;
++
++import java.nio.ByteBuffer;
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Locale;
++import java.util.Set;
++
++/**
++ * One video stream (and its controller), shared by all the WebSocket clients watching the same display.
++ * <p>
++ * It reuses the regular scrcpy pipeline: a {@link ScreenCapture} (existing display) or a {@link NewDisplayCapture} (new virtual display),
++ * encoded by a {@link SurfaceEncoder}, with input events injected by a {@link Controller}.
++ */
++public final class WsStream implements Streamer.Sink, WsControlChannel.Output, VirtualDisplayListener {
++
++    private static final int SCREEN_INFO_LENGTH = 6 * 4 + 1;
++
++    private final WsServer server;
++    private final Set<WebSocket> sockets = new HashSet<>();
++    private final WsControlChannel controlChannel;
++    private final Controller controller;
++    private final SurfaceCapture capture;
++    private final SurfaceEncoder encoder;
++    private final boolean flexDisplay;
++
++    private WsVideoSettings settings;
++    private volatile int displayId;
++    private volatile byte[] screenInfo;
++    private volatile boolean released;
++
++    public WsStream(WsServer server, WsVideoSettings settings, Ln.Level logLevel) {
++        this.server = server;
++        this.settings = settings;
++        this.displayId = settings.getDisplayId();
++        this.flexDisplay = settings.isNewDisplay() && settings.isFlexDisplay();
++
++        Options options = Options.parse(buildArguments(settings, logLevel));
++        controlChannel = new WsControlChannel(this);
++        controller = new Controller(controlChannel, null, options);
++        if (settings.isNewDisplay()) {
++            capture = new NewDisplayCapture(this, options);
++        } else {
++            capture = new ScreenCapture(this, options);
++        }
++        controller.setSurfaceCapture(capture);
++        Streamer streamer = new Streamer(this, VideoCodec.H264, false, false);
++        encoder = new SurfaceEncoder(capture, streamer, options);
++    }
++
++    private static String[] buildArguments(WsVideoSettings settings, Ln.Level logLevel) {
++        List<String> args = new ArrayList<>();
++        args.add(BuildConfig.VERSION_NAME);
++        args.add("log_level=" + logLevel.name().toLowerCase(Locale.ENGLISH));
++        args.add("audio=false");
++        args.add("control=true");
++        // No separate clean up process: the ws server outlives its clients
++        args.add("cleanup=false");
++        args.add("send_device_meta=false");
++        args.add("send_frame_meta=false");
++        args.add("send_dummy_byte=false");
++        args.add("send_stream_meta=false");
++        args.add("video_codec=h264");
++        // Like the scrcpy 1.19 fork: some decoders (Broadway) ignore the H.264 frame cropping
++        args.add("min_size_alignment=16");
++        if (settings.isKeepActive()) {
++            args.add("keep_active=true");
++        }
++        args.add("video_bit_rate=" + settings.getBitRate());
++        if (settings.getMaxFps() > 0) {
++            args.add("max_fps=" + settings.getMaxFps());
++        }
++        args.add("video_codec_options=" + settings.getFullCodecOptions());
++        if (settings.getEncoderName() != null) {
++            args.add("video_encoder=" + settings.getEncoderName());
++        }
++        if (settings.getCrop() != null) {
++            args.add("crop=" + settings.getCrop());
++        }
++        if (settings.getCaptureOrientation() != null) {
++            args.add("capture_orientation=" + settings.getCaptureOrientation());
++        }
++        int maxSize = settings.computeMaxSize(getCapturedDisplaySize(settings));
++        if (maxSize > 0) {
++            args.add("max_size=" + maxSize);
++        }
++        if (settings.isNewDisplay()) {
++            args.add("new_display=" + formatNewDisplay(settings));
++            if (settings.isFlexDisplay()) {
++                args.add("flex_display=true");
++            }
++        } else {
++            args.add("display_id=" + settings.getDisplayId());
++        }
++        return args.toArray(new String[0]);
++    }
++
++    private static String formatNewDisplay(WsVideoSettings settings) {
++        StringBuilder value = new StringBuilder();
++        if (settings.getNewDisplayWidth() > 0 && settings.getNewDisplayHeight() > 0) {
++            value.append(settings.getNewDisplayWidth()).append('x').append(settings.getNewDisplayHeight());
++        }
++        if (settings.getNewDisplayDpi() > 0) {
++            value.append('/').append(settings.getNewDisplayDpi());
++        }
++        return value.toString();
++    }
++
++    private static Size getCapturedDisplaySize(WsVideoSettings settings) {
++        if (settings.isNewDisplay() && settings.getNewDisplayWidth() > 0 && settings.getNewDisplayHeight() > 0) {
++            return new Size(settings.getNewDisplayWidth(), settings.getNewDisplayHeight());
++        }
++        int id = settings.isNewDisplay() ? 0 : settings.getDisplayId();
++        DisplayInfo info = ServiceManager.getDisplayManager().getDisplayInfo(id);
++        return info != null ? info.getSize() : null;
++    }
++
++    public void start() {
++        controller.start((fatalError) -> onTerminated("controller"));
++        encoder.start((fatalError) -> onTerminated("encoder"));
++    }
++
++    private void onTerminated(String component) {
++        if (!released) {
++            Ln.w("Stream for display " + displayId + " terminated (" + component + ")");
++            server.onStreamTerminated(this);
++        }
++    }
++
++    /**
++     * Release the stream (the threads are joined asynchronously). A new virtual display is destroyed.
++     */
++    public void release() {
++        if (released) {
++            return;
++        }
++        released = true;
++        controlChannel.close();
++        controller.stop();
++        encoder.stop();
++        new Thread(() -> {
++            try {
++                controller.join();
++                encoder.join();
++            } catch (InterruptedException e) {
++                // ignore
++            }
++            Ln.d("Stream for display " + displayId + " released");
++        }, "ws-stream-release").start();
++    }
++
++    public synchronized void join(WebSocket webSocket) {
++        sockets.add(webSocket);
++    }
++
++    /**
++     * @return {@code true} if there are no more clients
++     */
++    public synchronized boolean leave(WebSocket webSocket) {
++        sockets.remove(webSocket);
++        return sockets.isEmpty();
++    }
++
++    public synchronized List<WebSocket> getSockets() {
++        return new ArrayList<>(sockets);
++    }
++
++    public synchronized int getConnectionCount() {
++        return sockets.size();
++    }
++
++    public synchronized WsVideoSettings getSettings() {
++        return settings;
++    }
++
++    /**
++     * Apply new encoding settings (which do not require a new capture) to the running stream.
++     */
++    public synchronized void updateSettings(WsVideoSettings newSettings) {
++        settings = newSettings;
++        int maxSize = newSettings.computeMaxSize(getCurrentDisplaySize());
++        List<CodecOption> codecOptions = CodecOption.parse(newSettings.getFullCodecOptions());
++        encoder.updateSettings(newSettings.getBitRate(), maxSize, newSettings.getMaxFps(), codecOptions, newSettings.getEncoderName());
++    }
++
++    /**
++     * Restart the encoding, so that a new client receives the codec configuration and a key frame.
++     */
++    public void requestKeyFrame() {
++        CaptureControl captureControl = capture.getCaptureControl();
++        if (captureControl != null) {
++            captureControl.reset(CaptureControl.RESET_REASON_CLIENT_RESET);
++        }
++    }
++
++    /**
++     * The display id: for a new virtual display, it is only known once the display is created.
++     */
++    public int getDisplayId() {
++        return displayId;
++    }
++
++    public byte[] getScreenInfo() {
++        return screenInfo;
++    }
++
++    private Size getCurrentDisplaySize() {
++        if (displayId < 0) {
++            return getCapturedDisplaySize(settings);
++        }
++        DisplayInfo info = ServiceManager.getDisplayManager().getDisplayInfo(displayId);
++        return info != null ? info.getSize() : null;
++    }
++
++    @Override
++    public void onNewVirtualDisplay(int virtualDisplayId, PositionMapper positionMapper) {
++        controller.onNewVirtualDisplay(virtualDisplayId, positionMapper);
++        if (settings.isNewDisplay() && displayId != virtualDisplayId) {
++            displayId = virtualDisplayId;
++            synchronized (this) {
++                settings = settings.withDisplayId(virtualDisplayId);
++            }
++            server.onVirtualDisplayCreated(this);
++            startApp(settings.getStartApp());
++        }
++    }
++
++    /**
++     * Start an app on this stream's display, handled by the regular controller ("start app" control message).
++     */
++    private void startApp(String packageName) {
++        if (packageName == null) {
++            return;
++        }
++        byte[] name = packageName.getBytes(StandardCharsets.UTF_8);
++        if (name.length > 255) {
++            Ln.w("Package name too long: " + packageName);
++            return;
++        }
++        byte[] message = new byte[2 + name.length];
++        message[0] = ControlMessage.TYPE_START_APP;
++        message[1] = (byte) name.length;
++        System.arraycopy(name, 0, message, 2, name.length);
++        controlChannel.push(message);
++    }
++
++    @Override
++    public void onSessionStarted(int width, int height, boolean isClientResize) {
++        Size displaySize = getCurrentDisplaySize();
++        if (displaySize == null) {
++            displaySize = new Size(width, height);
++        }
++        ByteBuffer info = ByteBuffer.allocate(SCREEN_INFO_LENGTH);
++        // content rect
++        info.putInt(0);
++        info.putInt(0);
++        info.putInt(displaySize.getWidth());
++        info.putInt(displaySize.getHeight());
++        // video size (the size expected for the positions of the input events)
++        info.putInt(width);
++        info.putInt(height);
++        // the video is already rotated by the capture
++        info.put((byte) 0);
++        screenInfo = info.array();
++        server.broadcastInitialInfo();
++    }
++
++    @Override
++    public void onStreamDisabled(boolean error) {
++        Ln.w("Video stream disabled for display " + displayId);
++    }
++
++    @Override
++    public void write(ByteBuffer buffer) {
++        // The codec buffer is released after this call: copy it once for all the clients
++        ByteBuffer copy = ByteBuffer.allocate(buffer.remaining());
++        copy.put(buffer);
++        copy.flip();
++        broadcast(copy);
++    }
++
++    @Override
++    public void sendDeviceMessage(ByteBuffer message) {
++        broadcast(message);
++    }
++
++    private void broadcast(ByteBuffer data) {
++        for (WebSocket webSocket : getSockets()) {
++            if (webSocket.isOpen()) {
++                webSocket.send(data.duplicate());
++            }
++        }
++    }
++
++    public void pushControlMessage(byte[] message) {
++        if (message.length > 0 && message[0] == ControlMessage.TYPE_RESIZE_DISPLAY && !flexDisplay) {
++            // Only a flex display can be resized (the controller would fail)
++            return;
++        }
++        controlChannel.push(message);
++    }
++}
+diff --git a/server/src/main/java/com/genymobile/scrcpy/ws/WsVideoSettings.java b/server/src/main/java/com/genymobile/scrcpy/ws/WsVideoSettings.java
+new file mode 100644
+index 0000000..1ef4a16
+--- /dev/null
++++ b/server/src/main/java/com/genymobile/scrcpy/ws/WsVideoSettings.java
+@@ -0,0 +1,288 @@
++package com.genymobile.scrcpy.ws;
++
++import com.genymobile.scrcpy.device.Device;
++import com.genymobile.scrcpy.model.Size;
++
++import android.graphics.Rect;
++
++import java.nio.ByteBuffer;
++import java.nio.charset.StandardCharsets;
++import java.util.Arrays;
++import java.util.Objects;
++
++/**
++ * Stream parameters requested by a ws-scrcpy client (binary layout shared with src/app/VideoSettings.ts).
++ *
++ * <pre>
++ * bitRate          int32
++ * maxFps           int32
++ * iFrameInterval   int8
++ * bounds           uint16 width, uint16 height (0: no limit)
++ * crop             int16 left, top, right, bottom (all 0: no crop)
++ * sendFrameMeta    int8 (ignored)
++ * lockedVideoOrientation int8 (-1: unlocked)
++ * displayId        int32 (-1: create a new virtual display)
++ * codecOptions     int32 length + utf8
++ * encoderName      int32 length + utf8
++ * newDisplay       uint16 width, uint16 height, uint16 dpi (optional, 0: same as the main display)
++ * flags            uint8 (optional): 1 = keep the device active, 2 = flex display (resized by the client)
++ * startApp         int32 length + utf8 (optional): package of the app to start on a new virtual display
++ * </pre>
++ */
++public final class WsVideoSettings {
++
++    private static final int BASE_LENGTH = 35;
++    private static final int NEW_DISPLAY_LENGTH = 6;
++    private static final int FLAGS_LENGTH = 1;
++
++    public static final int FLAG_KEEP_ACTIVE = 1;
++    public static final int FLAG_FLEX_DISPLAY = 1 << 1;
++
++    private int bitRate = 8000000;
++    private int maxFps;
++    private byte iFrameInterval = 10;
++    private int boundsWidth;
++    private int boundsHeight;
++    private Rect crop;
++    private boolean sendFrameMeta;
++    private int lockedVideoOrientation = -1;
++    private int displayId;
++    private String codecOptions;
++    private String encoderName;
++    private int newDisplayWidth;
++    private int newDisplayHeight;
++    private int newDisplayDpi;
++    private int flags;
++    private String startApp;
++
++    public static WsVideoSettings fromBuffer(ByteBuffer data) {
++        WsVideoSettings s = new WsVideoSettings();
++        s.bitRate = data.getInt();
++        s.maxFps = data.getInt();
++        s.iFrameInterval = data.get();
++        s.boundsWidth = data.getShort() & 0xffff;
++        s.boundsHeight = data.getShort() & 0xffff;
++        int left = data.getShort();
++        int top = data.getShort();
++        int right = data.getShort();
++        int bottom = data.getShort();
++        if (left != 0 || top != 0 || right != 0 || bottom != 0) {
++            s.crop = new Rect(left, top, right, bottom);
++        }
++        s.sendFrameMeta = data.get() != 0;
++        s.lockedVideoOrientation = data.get();
++        s.displayId = data.getInt();
++        s.codecOptions = readString(data);
++        s.encoderName = readString(data);
++        if (data.remaining() >= NEW_DISPLAY_LENGTH) {
++            s.newDisplayWidth = data.getShort() & 0xffff;
++            s.newDisplayHeight = data.getShort() & 0xffff;
++            s.newDisplayDpi = data.getShort() & 0xffff;
++        }
++        if (data.remaining() >= FLAGS_LENGTH) {
++            s.flags = data.get() & 0xff;
++        }
++        s.startApp = readString(data);
++        return s;
++    }
++
++    private static String readString(ByteBuffer data) {
++        if (data.remaining() < 4) {
++            return null;
++        }
++        int length = data.getInt();
++        if (length <= 0) {
++            return null;
++        }
++        byte[] bytes = new byte[length];
++        data.get(bytes);
++        String value = new String(bytes, StandardCharsets.UTF_8);
++        return value.isEmpty() || "-".equals(value) ? null : value;
++    }
++
++    public byte[] toByteArray() {
++        byte[] codecOptionsBytes = codecOptions == null ? new byte[0] : codecOptions.getBytes(StandardCharsets.UTF_8);
++        byte[] encoderNameBytes = encoderName == null ? new byte[0] : encoderName.getBytes(StandardCharsets.UTF_8);
++        byte[] startAppBytes = startApp == null ? new byte[0] : startApp.getBytes(StandardCharsets.UTF_8);
++        ByteBuffer buffer = ByteBuffer.allocate(BASE_LENGTH + codecOptionsBytes.length + encoderNameBytes.length + NEW_DISPLAY_LENGTH
++                + FLAGS_LENGTH + 4 + startAppBytes.length);
++        buffer.putInt(bitRate);
++        buffer.putInt(maxFps);
++        buffer.put(iFrameInterval);
++        buffer.putShort((short) boundsWidth);
++        buffer.putShort((short) boundsHeight);
++        Rect c = crop != null ? crop : new Rect();
++        buffer.putShort((short) c.left);
++        buffer.putShort((short) c.top);
++        buffer.putShort((short) c.right);
++        buffer.putShort((short) c.bottom);
++        buffer.put((byte) (sendFrameMeta ? 1 : 0));
++        buffer.put((byte) lockedVideoOrientation);
++        buffer.putInt(displayId);
++        buffer.putInt(codecOptionsBytes.length);
++        buffer.put(codecOptionsBytes);
++        buffer.putInt(encoderNameBytes.length);
++        buffer.put(encoderNameBytes);
++        buffer.putShort((short) newDisplayWidth);
++        buffer.putShort((short) newDisplayHeight);
++        buffer.putShort((short) newDisplayDpi);
++        buffer.put((byte) flags);
++        buffer.putInt(startAppBytes.length);
++        buffer.put(startAppBytes);
++        return buffer.array();
++    }
++
++    public boolean isNewDisplay() {
++        return displayId == Device.DISPLAY_ID_NONE;
++    }
++
++    public int getDisplayId() {
++        return displayId;
++    }
++
++    /**
++     * Copy with another display id: once created, a new virtual display is identified by its own display id.
++     */
++    public WsVideoSettings withDisplayId(int newDisplayId) {
++        WsVideoSettings copy = fromBuffer(ByteBuffer.wrap(toByteArray()));
++        copy.displayId = newDisplayId;
++        return copy;
++    }
++
++    public boolean hasNewDisplayParams() {
++        return newDisplayWidth != 0 || newDisplayHeight != 0 || newDisplayDpi != 0;
++    }
++
++    public int getNewDisplayWidth() {
++        return newDisplayWidth;
++    }
++
++    public int getNewDisplayHeight() {
++        return newDisplayHeight;
++    }
++
++    public int getNewDisplayDpi() {
++        return newDisplayDpi;
++    }
++
++    /**
++     * The package of the app to start once the new virtual display is created (also reported to the clients, so that they can find
++     * the display running an app).
++     */
++    public String getStartApp() {
++        return startApp;
++    }
++
++    public boolean isKeepActive() {
++        return (flags & FLAG_KEEP_ACTIVE) != 0;
++    }
++
++    /**
++     * A flex display (a new virtual display only) is resized to the size of the client window.
++     */
++    public boolean isFlexDisplay() {
++        return (flags & FLAG_FLEX_DISPLAY) != 0;
++    }
++
++    public int getBitRate() {
++        return bitRate;
++    }
++
++    public int getMaxFps() {
++        return maxFps;
++    }
++
++    public String getEncoderName() {
++        return encoderName;
++    }
++
++    /**
++     * Codec options in the scrcpy syntax, including the I-frame interval.
++     */
++    public String getFullCodecOptions() {
++        String iFrame = "i-frame-interval:int=" + (iFrameInterval > 0 ? iFrameInterval : 10);
++        return codecOptions == null ? iFrame : iFrame + "," + codecOptions;
++    }
++
++    /**
++     * Convert the bounding box requested by the client to the scrcpy "max size" (the maximum of width and height).
++     *
++     * @param displaySize the (rotated) size of the captured display
++     * @return the max size, 0 for no limit
++     */
++    public int computeMaxSize(Size displaySize) {
++        if (boundsWidth == 0 || boundsHeight == 0 || displaySize == null) {
++            return 0;
++        }
++        int w = displaySize.getWidth();
++        int h = displaySize.getHeight();
++        if (boundsWidth >= w && boundsHeight >= h) {
++            return 0;
++        }
++        double scale = Math.min((double) boundsWidth / w, (double) boundsHeight / h);
++        return (int) (Math.max(w, h) * scale);
++    }
++
++    /**
++     * Return the value for the scrcpy "capture_orientation" option, or null if the orientation is not locked.
++     */
++    public String getCaptureOrientation() {
++        switch (lockedVideoOrientation) {
++            case 0:
++                return "@0";
++            case 1:
++                return "@90";
++            case 2:
++                return "@180";
++            case 3:
++                return "@270";
++            case -2:
++                return "@";
++            default:
++                return null;
++        }
++    }
++
++    /**
++     * Return the value for the scrcpy "crop" option ("width:height:x:y"), or null.
++     */
++    public String getCrop() {
++        if (crop == null) {
++            return null;
++        }
++        return crop.width() + ":" + crop.height() + ":" + crop.left + ":" + crop.top;
++    }
++
++    /**
++     * Whether the capture must be recreated to apply these settings (as opposed to only reconfiguring the encoder).
++     */
++    public boolean requiresNewCapture(WsVideoSettings o) {
++        return displayId != o.displayId || lockedVideoOrientation != o.lockedVideoOrientation || !Objects.equals(crop, o.crop)
++                || newDisplayWidth != o.newDisplayWidth || newDisplayHeight != o.newDisplayHeight || newDisplayDpi != o.newDisplayDpi
++                || flags != o.flags;
++    }
++
++    @Override
++    public boolean equals(Object o) {
++        if (this == o) {
++            return true;
++        }
++        if (!(o instanceof WsVideoSettings)) {
++            return false;
++        }
++        return Arrays.equals(toByteArray(), ((WsVideoSettings) o).toByteArray());
++    }
++
++    @Override
++    public int hashCode() {
++        return Arrays.hashCode(toByteArray());
++    }
++
++    @Override
++    public String toString() {
++        return "WsVideoSettings{bitRate=" + bitRate + ", maxFps=" + maxFps + ", iFrameInterval=" + iFrameInterval + ", bounds=" + boundsWidth
++                + "x" + boundsHeight + ", crop=" + getCrop() + ", lockedVideoOrientation=" + lockedVideoOrientation + ", displayId=" + displayId
++                + ", codecOptions=" + codecOptions + ", encoderName=" + encoderName + ", newDisplay=" + newDisplayWidth + "x" + newDisplayHeight
++                + "/" + newDisplayDpi + ", flags=" + flags + ", startApp=" + startApp + "}";
++    }
++}
+-- 
+2.43.0
+

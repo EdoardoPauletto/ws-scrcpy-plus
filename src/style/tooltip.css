@@ -1,0 +1,22 @@
+/* Material 3 plain tooltip (see src/app/ui/Tooltip.ts) */
+.md-tooltip {
+    position: fixed;
+    z-index: 100;
+    max-width: 280px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-family: var(--md-font);
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--md-inverse-on-surface);
+    background-color: var(--md-inverse-surface);
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.1s ease;
+}
+
+.md-tooltip.visible {
+    opacity: 1;
+    visibility: visible;
+}

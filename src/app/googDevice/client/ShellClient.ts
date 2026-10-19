@@ -8,6 +8,7 @@ import { ACTION } from '../../../common/Action';
 import { ParamsShell } from '../../../types/ParamsShell';
 import GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import { BaseDeviceTracker } from '../../client/BaseDeviceTracker';
+import SvgImage from '../../ui/SvgImage';
 import Util from '../../Util';
 import { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import { ChannelCode } from '../../../common/ChannelCode';
@@ -130,8 +131,9 @@ export class ShellClient extends ManagerClient<ParamsShell, never> {
                     action: ACTION.SHELL,
                     udid: descriptor.udid,
                 },
-                'shell',
+                'Shell',
                 params,
+                SvgImage.Icon.TERMINAL,
             ),
         );
         return entry;

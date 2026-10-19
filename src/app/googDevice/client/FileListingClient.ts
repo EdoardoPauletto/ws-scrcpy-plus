@@ -3,6 +3,7 @@ import { ParamsFileListing } from '../../../types/ParamsFileListing';
 import { ManagerClient } from '../../client/ManagerClient';
 import GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import { BaseDeviceTracker } from '../../client/BaseDeviceTracker';
+import SvgImage from '../../ui/SvgImage';
 import { ACTION } from '../../../common/Action';
 import { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import Util from '../../Util';
@@ -75,8 +76,9 @@ export class FileListingClient extends ManagerClient<ParamsFileListing, never> i
                     udid: descriptor.udid,
                     path: `${tempPath}/`,
                 },
-                'list files',
+                'Files',
                 params,
+                SvgImage.Icon.FOLDER,
             ),
         );
         return entry;

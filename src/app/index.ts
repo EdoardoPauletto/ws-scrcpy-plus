@@ -33,6 +33,18 @@ window.onload = async function (): Promise<void> {
         return;
     }
 
+    /// #if INCLUDE_GOOG
+    {
+        // Shareable stream link: <pathname><device>/<package>
+        const { AppStreamLauncher } = await import('./googDevice/client/AppStreamLauncher');
+        const appLink = AppStreamLauncher.parseLocation();
+        if (appLink) {
+            AppStreamLauncher.start(...appLink);
+            return;
+        }
+    }
+    /// #endif
+
     /// #if INCLUDE_APPL
     {
         const { DeviceTracker } = await import('./applDevice/client/DeviceTracker');

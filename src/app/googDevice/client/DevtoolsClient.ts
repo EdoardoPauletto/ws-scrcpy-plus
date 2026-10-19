@@ -1,3 +1,4 @@
+import '../../../style/material.css';
 import '../../../style/devtools.css';
 import { ManagerClient } from '../../client/ManagerClient';
 import { ACTION } from '../../../common/Action';
@@ -7,6 +8,8 @@ import { Message } from '../../../types/Message';
 import { DevtoolsInfo, RemoteBrowserInfo, RemoteTarget, TargetDescription } from '../../../types/RemoteDevtools';
 import GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import { BaseDeviceTracker } from '../../client/BaseDeviceTracker';
+import SvgImage from '../../ui/SvgImage';
+import { html } from '../../ui/HtmlTag';
 import { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import Util from '../../Util';
 
@@ -26,6 +29,7 @@ export class DevtoolsClient extends ManagerClient<ParamsDevtools, never> {
     private readonly hiddenInput: HTMLInputElement;
     private readonly tooltip: HTMLSpanElement;
     private hideTimeout?: number;
+    private emptyState?: HTMLElement;
     private readonly udid: string;
     constructor(params: ParamsDevtools) {
         super(params);
@@ -337,6 +341,54 @@ export class DevtoolsClient extends ManagerClient<ParamsDevtools, never> {
         }, 1000);
     }
 
+    // Explains how to make pages show up; built once, the list is rebuilt every second
+    private getEmptyState(): HTMLElement {
+        if (this.emptyState) {
+            return this.emptyState;
+        }
+        const empty = html`<div class="devtools-empty">
+            <div class="empty-icon"></div>
+            <div class="empty-title">No inspectable pages</div>
+            <div class="empty-text">
+                Web pages and WebViews open on the device appear here, ready to be debugged with Chrome DevTools.
+            </div>
+            <ul>
+                <li>
+                    <span class="hint-icon web"></span>
+                    <span>
+                        <b>Browser</b>: open Chrome (or another Chromium-based browser) on the device and load a page.
+                    </span>
+                </li>
+                <li>
+                    <span class="hint-icon app"></span>
+                    <span>
+                        <b>App with a WebView</b>: the app has to enable debugging with
+                        <code>WebView.setWebContentsDebuggingEnabled(true)</code>.
+                    </span>
+                </li>
+                <li>
+                    <span class="hint-icon inspect"></span>
+                    <span>
+                        Then click <b>inspect</b> to open DevTools in a new tab (it needs internet access), or
+                        <b>bundled</b> / <b>remote</b> to copy a <code>devtools://</code> link to paste in Chrome.
+                    </span>
+                </li>
+            </ul>
+            <div class="empty-note">The list updates automatically.</div>
+        </div>`.content.firstElementChild as HTMLElement;
+        const icons: [string, number][] = [
+            ['.empty-icon', SvgImage.Icon.CODE],
+            ['.hint-icon.web', SvgImage.Icon.WEB],
+            ['.hint-icon.app', SvgImage.Icon.SMARTPHONE],
+            ['.hint-icon.inspect', SvgImage.Icon.INFO],
+        ];
+        icons.forEach(([selector, icon]) => {
+            empty.querySelector(selector)?.appendChild(SvgImage.create(icon));
+        });
+        this.emptyState = empty;
+        return empty;
+    }
+
     public buildList(info: DevtoolsInfo): void {
         // console.log(info);
         const block = this.createDeviceBlock(info);
@@ -344,6 +396,9 @@ export class DevtoolsClient extends ManagerClient<ParamsDevtools, never> {
         const browsers = this.createBrowsersBlock(info);
         block.appendChild(header);
         block.appendChild(browsers);
+        if (!info.browsers.length) {
+            block.appendChild(this.getEmptyState());
+        }
         const old = document.getElementById(block.id);
         if (old) {
             old.parentElement?.replaceChild(block, old);
@@ -368,8 +423,9 @@ export class DevtoolsClient extends ManagerClient<ParamsDevtools, never> {
                     action: ACTION.DEVTOOLS,
                     udid: descriptor.udid,
                 },
-                'devtools',
+                'DevTools',
                 params,
+                SvgImage.Icon.CODE,
             ),
         );
         return entry;

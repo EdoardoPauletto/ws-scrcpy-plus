@@ -4,6 +4,7 @@ import { BaseDeviceDescriptor } from '../../types/BaseDeviceDescriptor';
 import { DeviceTrackerEvent } from '../../types/DeviceTrackerEvent';
 import { DeviceTrackerEventList } from '../../types/DeviceTrackerEventList';
 import { html } from '../ui/HtmlTag';
+import SvgImage, { Icon } from '../ui/SvgImage';
 import { ParamsDeviceTracker } from '../../types/ParamsDeviceTracker';
 import { HostItem } from '../../types/Configuration';
 import { Tool } from './Tool';
@@ -47,7 +48,7 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         return wsUrl;
     }
 
-    public static buildLink(q: any, text: string, params: ParamsDeviceTracker): HTMLAnchorElement {
+    public static buildLink(q: any, text: string, params: ParamsDeviceTracker, icon?: Icon): HTMLAnchorElement {
         let { hostname } = params;
         let port: string | number | undefined = params.port;
         let pathname = params.pathname ?? location.pathname;
@@ -70,6 +71,9 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         a.setAttribute('target', '_blank');
         a.classList.add(`link-${q.action}`);
         a.innerText = text;
+        if (typeof icon !== 'undefined') {
+            a.prepend(SvgImage.create(icon));
+        }
         return a;
     }
 
@@ -109,9 +113,33 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
         const tbody = this.getOrBuildTableBody(devices);
 
         const block = this.getOrCreateTrackerBlock(tbody, this.trackerName);
+        if (!data.length) {
+            this.buildEmptyState(block);
+        }
         data.forEach((item) => {
             this.buildDeviceRow(block, item);
         });
+    }
+
+    protected buildEmptyState(parent: Element): void {
+        const empty = html`<div class="device-list-empty">
+            <div class="empty-icon"></div>
+            <div class="empty-title">No devices connected</div>
+            <div class="empty-hint"></div>
+        </div>`.content;
+        const icon = empty.querySelector('.empty-icon');
+        icon && icon.appendChild(SvgImage.create(SvgImage.Icon.SMARTPHONE));
+        const hintHolder = empty.querySelector('.empty-hint');
+        const hint = this.getEmptyStateHint();
+        if (hintHolder && hint) {
+            hintHolder.appendChild(hint);
+        }
+        parent.appendChild(empty);
+    }
+
+    // Platform specific instructions on how to make a device show up in the list
+    protected getEmptyStateHint(): DocumentFragment | undefined {
+        return;
     }
 
     private setNameValue(parent: Element | null, name: string): void {
@@ -232,6 +260,10 @@ export abstract class BaseDeviceTracker<DD extends BaseDeviceDescriptor, TE exte
             }
         }
         return tbody;
+    }
+
+    public getDescriptors(): DD[] {
+        return [...this.descriptors];
     }
 
     public getDescriptorByUdid(udid: string): DD | undefined {

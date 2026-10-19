@@ -49,8 +49,11 @@ export class CommandControlMessage extends ControlMessage {
         const textBytes: Uint8Array | null = text ? Util.stringToUtf8ByteArray(text) : null;
         const textLength = textBytes ? textBytes.length : 0;
         let offset = 0;
-        const buffer = Buffer.alloc(1 + 1 + 4 + textLength);
+        const buffer = Buffer.alloc(1 + 8 + 1 + 4 + textLength);
         offset = buffer.writeInt8(event.type, offset);
+        // sequence: 0 means that no acknowledgement is requested
+        offset = buffer.writeUInt32BE(0, offset);
+        offset = buffer.writeUInt32BE(0, offset);
         offset = buffer.writeInt8(paste ? 1 : 0, offset);
         offset = buffer.writeInt32BE(textLength, offset);
         if (textBytes) {
@@ -59,6 +62,23 @@ export class CommandControlMessage extends ControlMessage {
             });
         }
         event.buffer = buffer;
+        return event;
+    }
+
+    // Resize a flex virtual display
+    public static createResizeDisplayCommand(width: number, height: number): CommandControlMessage {
+        const event = new CommandControlMessage(ControlMessage.TYPE_RESIZE_DISPLAY);
+        const buffer = Buffer.alloc(1 + 2 + 2);
+        let offset = buffer.writeUInt8(event.type, 0);
+        offset = buffer.writeUInt16BE(width, offset);
+        buffer.writeUInt16BE(height, offset);
+        event.buffer = buffer;
+        return event;
+    }
+
+    public static createSetAudioCommand(enabled: boolean, keepPlayingOnDevice: boolean): CommandControlMessage {
+        const event = new CommandControlMessage(ControlMessage.TYPE_SET_AUDIO);
+        event.buffer = Buffer.from([event.type, enabled ? 1 : 0, keepPlayingOnDevice ? 1 : 0]);
         return event;
     }
 
@@ -208,6 +228,11 @@ export class CommandControlMessage extends ControlMessage {
      */
     public toBuffer(): Buffer {
         if (!this.buffer) {
+            if (this.type === ControlMessage.TYPE_GET_CLIPBOARD) {
+                // copyKey: 0 (do not inject COPY or CUT before reading the clipboard)
+                this.buffer = Buffer.from([this.type, 0]);
+                return this.buffer;
+            }
             const buffer = Buffer.alloc(CommandControlMessage.PAYLOAD_LENGTH + 1);
             buffer.writeUInt8(this.type, 0);
             this.buffer = buffer;

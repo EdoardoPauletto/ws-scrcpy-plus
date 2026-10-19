@@ -250,6 +250,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
             lockedVideoOrientation,
             codecOptions,
             encoderName,
+            keepActive,
         } = parsed;
 
         // REMOVE `frameRate`
@@ -276,6 +277,7 @@ export abstract class BasePlayer extends TypedEmitter<PlayerEvents> {
                 : preferred.lockedVideoOrientation,
             codecOptions,
             encoderName,
+            keepActive: typeof keepActive === 'boolean' ? keepActive : preferred.keepActive,
         });
     }
 

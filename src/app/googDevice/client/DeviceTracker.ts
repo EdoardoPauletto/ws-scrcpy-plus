@@ -1,3 +1,4 @@
+import '../../../style/material.css';
 import '../../../style/devicelist.css';
 import { BaseDeviceTracker } from '../../client/BaseDeviceTracker';
 import { SERVER_PORT } from '../../../common/Constants';
@@ -5,7 +6,7 @@ import { ACTION } from '../../../common/Action';
 import GoogDeviceDescriptor from '../../../types/GoogDeviceDescriptor';
 import { ControlCenterCommand } from '../../../common/ControlCenterCommand';
 import { StreamClientScrcpy } from './StreamClientScrcpy';
-import SvgImage from '../../ui/SvgImage';
+import SvgImage, { Icon } from '../../ui/SvgImage';
 import { html } from '../../ui/HtmlTag';
 import Util from '../../Util';
 import { Attribute } from '../../Attribute';
@@ -116,6 +117,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 },
                 decodeURIComponent(playerFullName),
                 this.params,
+                SvgImage.Icon.PLAY_ARROW,
             );
             item.appendChild(link);
         });
@@ -171,6 +173,66 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         return title.toLowerCase().replace(/\s/g, '_');
     }
 
+    // Devices connected over the network use "host:port" as their adb serial
+    private static isNetworkSerial(udid: string): boolean {
+        return /^[\w.-]+:\d+$/.test(udid);
+    }
+
+    private static getStateHint(state: string): string {
+        switch (state) {
+            case DeviceState.DEVICE:
+                return '';
+            case 'unauthorized':
+                return 'Allow debugging in the prompt shown on the device.';
+            case 'offline':
+                return 'The device is not responding: reconnect it or restart adb.';
+            default:
+                return `The device is ${state}.`;
+        }
+    }
+
+    // A labelled value with a leading icon, Android settings style
+    private static createField(icon: Icon, label: string, value: string, className: string): HTMLElement {
+        const field = document.createElement('div');
+        field.className = `device-field ${className}`;
+        const iconHolder = document.createElement('span');
+        iconHolder.className = 'field-icon';
+        iconHolder.appendChild(SvgImage.create(icon));
+        const text = html`<span class="field-text">
+            <span class="field-label">${label}</span>
+            <span class="field-value">${value || '—'}</span>
+        </span>`.content;
+        field.appendChild(iconHolder);
+        field.appendChild(text);
+        return field;
+    }
+
+    protected getEmptyStateHint(): DocumentFragment {
+        const hint = html`<ul>
+            <li>
+                <span class="hint-icon usb"></span>
+                <span>
+                    Plug the device in via USB with <b>USB debugging</b> enabled (Settings › Developer options) and
+                    allow the authorization prompt on the device.
+                </span>
+            </li>
+            <li>
+                <span class="hint-icon wifi"></span>
+                <span>
+                    Or connect it over the network from the machine running ws-scrcpy:
+                    <code>adb connect &lt;device-ip&gt;:5555</code> (in the container:
+                    <code>podman-compose exec ws-scrcpy adb connect &lt;device-ip&gt;:5555</code>).
+                </span>
+            </li>
+        </ul>
+        <div class="empty-note">The list updates automatically when a device is connected.</div>`.content;
+        const usb = hint.querySelector('.hint-icon.usb');
+        usb && usb.appendChild(SvgImage.create(SvgImage.Icon.USB));
+        const wifi = hint.querySelector('.hint-icon.wifi');
+        wifi && wifi.appendChild(SvgImage.create(SvgImage.Icon.WIFI));
+        return hint;
+    }
+
     protected buildDeviceRow(tbody: Element, device: GoogDeviceDescriptor): void {
         let selectedInterfaceUrl = '';
         let selectedInterfaceName = '';
@@ -179,32 +241,63 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
         const isActive = device.state === DeviceState.DEVICE;
         let hasPid = false;
         const servicesId = `device_services_${fullName}`;
+        const isNetwork = DeviceTracker.isNetworkSerial(device.udid);
+        const serialLabel = isNetwork ? 'IP address and port' : 'Serial';
+        // Unauthorized/offline devices report no properties
+        const deviceName =
+            `${device['ro.product.manufacturer'] || ''} ${device['ro.product.model'] || ''}`.trim() || 'Unknown device';
         const row = html`<div class="device ${isActive ? 'active' : 'not-active'}">
             <div class="device-header">
-                <div class="device-name">${device['ro.product.manufacturer']} ${device['ro.product.model']}</div>
-                <div class="device-serial">${device.udid}</div>
-                <div class="device-version">
-                    <div class="release-version">${device['ro.build.version.release']}</div>
-                    <div class="sdk-version">${device['ro.build.version.sdk']}</div>
+                <div class="device-avatar"></div>
+                <div class="device-title">
+                    <div class="device-name">${deviceName}</div>
+                    <div class="device-serial" title="${serialLabel}">
+                        <span class="device-serial-value">${device.udid}</span>
+                    </div>
                 </div>
-                <div class="device-state" title="State: ${device.state}"></div>
+                <div class="device-status" title="State: ${device.state}">
+                    <span class="device-state"></span>
+                    <span class="device-state-name">${device.state}</span>
+                </div>
             </div>
-            <div id="${servicesId}" class="services"></div>
+            <div class="device-hint">${DeviceTracker.getStateHint(device.state)}</div>
+            <div id="${servicesId}_info" class="device-info"></div>
+            <div id="${servicesId}" class="services services-stream"></div>
+            <div id="${servicesId}_tools" class="services services-tools"></div>
         </div>`.content;
+        const avatar = row.querySelector('.device-avatar');
+        avatar && avatar.appendChild(SvgImage.create(SvgImage.Icon.SMARTPHONE));
+        const serial = row.querySelector('.device-serial');
+        serial && serial.prepend(SvgImage.create(isNetwork ? SvgImage.Icon.WIFI : SvgImage.Icon.USB));
+        const info = row.getElementById(`${servicesId}_info`);
+        // Extra tools (shell, devtools, file listing) are grouped apart from the stream controls
+        const extras = row.getElementById(`${servicesId}_tools`);
         const services = row.getElementById(servicesId);
-        if (!services) {
+        if (!info || !extras || !services) {
             return;
         }
+
+        info.appendChild(
+            DeviceTracker.createField(
+                SvgImage.Icon.ANDROID,
+                'Android version',
+                device['ro.build.version.release'],
+                'release-version',
+            ),
+        );
+        info.appendChild(
+            DeviceTracker.createField(SvgImage.Icon.API, 'API level', device['ro.build.version.sdk'], 'sdk-version'),
+        );
 
         DeviceTracker.tools.forEach((tool) => {
             const entry = tool.createEntryForDeviceList(device, blockClass, this.params);
             if (entry) {
                 if (Array.isArray(entry)) {
                     entry.forEach((item) => {
-                        item && services.appendChild(item);
+                        item && extras.appendChild(item);
                     });
                 } else {
-                    services.appendChild(entry);
+                    extras.appendChild(entry);
                 }
             }
         });
@@ -221,13 +314,17 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
             } else {
                 value = item.field(device);
             }
-            const td = document.createElement('div');
-            td.classList.add(DeviceTracker.titleToClassName(title), blockClass);
-            services.appendChild(td);
             if (fieldName === 'pid') {
                 hasPid = value !== '-1';
+                const td = DeviceTracker.createField(
+                    SvgImage.Icon.MEMORY,
+                    title,
+                    hasPid ? value : 'not running',
+                    `${DeviceTracker.titleToClassName(title)} ${blockClass}`,
+                );
+                info.appendChild(td);
                 const actionButton = document.createElement('button');
-                actionButton.className = 'action-button kill-server-button';
+                actionButton.className = 'action-button icon-button kill-server-button';
                 actionButton.setAttribute(Attribute.UDID, device.udid);
                 actionButton.setAttribute(Attribute.PID, value);
                 let command: string;
@@ -237,11 +334,11 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                     if (hasPid) {
                         command = ControlCenterCommand.KILL_SERVER;
                         actionButton.title = 'Kill server';
-                        actionButton.appendChild(SvgImage.create(SvgImage.Icon.CANCEL));
+                        actionButton.appendChild(SvgImage.create(SvgImage.Icon.STOP));
                     } else {
                         command = ControlCenterCommand.START_SERVER;
                         actionButton.title = 'Start server';
-                        actionButton.appendChild(SvgImage.create(SvgImage.Icon.REFRESH));
+                        actionButton.appendChild(SvgImage.create(SvgImage.Icon.PLAY_ARROW));
                     }
                     actionButton.setAttribute(Attribute.COMMAND, command);
                 } else {
@@ -254,11 +351,13 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                     }
                     actionButton.appendChild(SvgImage.create(SvgImage.Icon.OFFLINE));
                 }
-                const span = document.createElement('span');
-                span.innerText = value;
-                actionButton.appendChild(span);
                 td.appendChild(actionButton);
             } else if (fieldName === 'interfaces') {
+                const td = document.createElement('div');
+                td.classList.add(DeviceTracker.titleToClassName(title), blockClass);
+                td.title = title;
+                td.appendChild(SvgImage.create(SvgImage.Icon.LAN));
+                services.appendChild(td);
                 const proxyInterfaceUrl = DeviceTracker.createUrl(this.params, device.udid).toString();
                 const proxyInterfaceName = 'proxy';
                 const localStorageKey = DeviceTracker.getLocalStorageKey(fullName);
@@ -297,6 +396,8 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 selectedInterfaceName = proxyInterfaceName;
                 td.classList.add('hidden');
                 /// #endif
+                selectElement.onchange = this.onInterfaceSelected;
+                td.appendChild(selectElement);
                 if (isActive) {
                     const adbProxyOption = DeviceTracker.createInterfaceOption(proxyInterfaceName, proxyInterfaceUrl);
                     if (lastSelected === proxyInterfaceName || !selectedInterfaceName) {
@@ -306,7 +407,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                     }
                     selectElement.appendChild(adbProxyOption);
                     const actionButton = document.createElement('button');
-                    actionButton.className = 'action-button update-interfaces-button active';
+                    actionButton.className = 'action-button icon-button update-interfaces-button active';
                     actionButton.title = `Update information`;
                     actionButton.appendChild(SvgImage.create(SvgImage.Icon.REFRESH));
                     actionButton.setAttribute(Attribute.UDID, device.udid);
@@ -314,15 +415,19 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                     actionButton.onclick = this.onActionButtonClick;
                     td.appendChild(actionButton);
                 }
-                selectElement.onchange = this.onInterfaceSelected;
-                td.appendChild(selectElement);
             } else {
+                const td = document.createElement('div');
+                td.classList.add(DeviceTracker.titleToClassName(title), blockClass);
                 td.innerText = value;
+                services.appendChild(td);
             }
         });
 
         if (DeviceTracker.CREATE_DIRECT_LINKS) {
             const name = `${DeviceTracker.AttributePrefixPlayerFor}${fullName}`;
+            const players = document.createElement('div');
+            players.className = 'stream-players';
+            services.appendChild(players);
             StreamClientScrcpy.getPlayers().forEach((playerClass) => {
                 const { playerCodeName, playerFullName } = playerClass;
                 const playerTd = document.createElement('div');
@@ -330,7 +435,7 @@ export class DeviceTracker extends BaseDeviceTracker<GoogDeviceDescriptor, never
                 playerTd.setAttribute('name', encodeURIComponent(name));
                 playerTd.setAttribute(DeviceTracker.AttributePlayerFullName, encodeURIComponent(playerFullName));
                 playerTd.setAttribute(DeviceTracker.AttributePlayerCodeName, encodeURIComponent(playerCodeName));
-                services.appendChild(playerTd);
+                players.appendChild(playerTd);
             });
         }
 

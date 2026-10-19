@@ -1,0 +1,279 @@
+/* Material 3 color roles (Google baseline palette) used by the device list */
+:root {
+    --md-primary: #0b57d0;
+    --md-on-primary: #ffffff;
+    --md-primary-container: #d3e3fd;
+    --md-on-primary-container: #041e49;
+    --md-secondary-container: #c2e7ff;
+    --md-on-secondary-container: #001d35;
+    --md-success: #146c2e;
+    --md-success-container: #c4eed0;
+    --md-on-success-container: #072711;
+    --md-error: #b3261e;
+    --md-on-error: #ffffff;
+    /* Destructive actions (e.g. Disconnect): a clearly red button in both themes */
+    --md-danger: #b3261e;
+    --md-on-danger: #ffffff;
+    --md-error-container: #f9dedc;
+    --md-on-error-container: #410e0b;
+    --md-surface: #f8fafd;
+    --md-surface-container-low: #ffffff;
+    --md-surface-container: #f0f4f9;
+    --md-surface-container-high: #e9eef6;
+    --md-surface-container-highest: #dde3ea;
+    --md-on-surface: #1f1f1f;
+    --md-on-surface-variant: #444746;
+    --md-outline: #747775;
+    --md-outline-variant: #c4c7c5;
+    --md-inverse-surface: #303030;
+    --md-inverse-on-surface: #f2f2f2;
+    --md-scrim: hsla(0, 0%, 0%, 0.32);
+    --md-elevation-1: 0 1px 2px hsla(0, 0%, 0%, 0.3), 0 1px 3px 1px hsla(0, 0%, 0%, 0.15);
+    --md-elevation-2: 0 1px 2px hsla(0, 0%, 0%, 0.3), 0 2px 6px 2px hsla(0, 0%, 0%, 0.15);
+    --md-font: Roboto, 'Google Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    --md-font-mono: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --md-primary: #a8c7fa;
+        --md-on-primary: #062e6f;
+        --md-primary-container: #0842a0;
+        --md-on-primary-container: #d3e3fd;
+        --md-secondary-container: #004a77;
+        --md-on-secondary-container: #c2e7ff;
+        --md-success: #6dd58c;
+        --md-success-container: #0f5223;
+        --md-on-success-container: #c4eed0;
+        --md-error: #f2b8b5;
+        --md-on-error: #601410;
+        --md-danger: #c5352b;
+        --md-on-danger: #ffffff;
+        --md-error-container: #8c1d18;
+        --md-on-error-container: #f9dedc;
+        --md-surface: #131314;
+        --md-surface-container-low: #1b1b1b;
+        --md-surface-container: #1e1f20;
+        --md-surface-container-high: #282a2c;
+        --md-surface-container-highest: #333537;
+        --md-on-surface: #e3e3e3;
+        --md-on-surface-variant: #c4c7c5;
+        --md-outline: #8e918f;
+        --md-outline-variant: #444746;
+        --md-inverse-surface: #e3e3e3;
+        --md-inverse-on-surface: #303030;
+        --md-scrim: hsla(0, 0%, 0%, 0.6);
+        --md-elevation-1: 0 1px 2px hsla(0, 0%, 0%, 0.3), 0 1px 3px 1px hsla(0, 0%, 0%, 0.15);
+        --md-elevation-2: 0 1px 2px hsla(0, 0%, 0%, 0.3), 0 2px 6px 2px hsla(0, 0%, 0%, 0.15);
+    }
+}
+
+/* Shared Material components (configure dialog, stream "more" menu) */
+.md-button svg,
+.md-icon-button svg {
+    fill: currentColor;
+    flex-shrink: 0;
+}
+
+/* Outlined fields */
+.md-select,
+.md-input {
+    box-sizing: border-box;
+    width: 176px;
+    max-width: 45vw;
+    height: 40px;
+    padding: 0 12px;
+    border: 1px solid var(--md-outline);
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--md-on-surface);
+    background-color: transparent;
+    text-overflow: ellipsis;
+}
+
+.md-select {
+    padding-right: 4px;
+    cursor: pointer;
+}
+
+.md-select option {
+    color: var(--md-on-surface);
+    background-color: var(--md-surface-container-high);
+}
+
+.md-input.md-input-size {
+    width: 76px;
+    padding: 0 8px;
+    text-align: center;
+}
+
+.md-select:hover,
+.md-input:hover:not(:disabled) {
+    border-color: var(--md-on-surface);
+}
+
+.md-select:focus,
+.md-input:focus {
+    border-color: var(--md-primary);
+    box-shadow: inset 0 0 0 1px var(--md-primary);
+}
+
+.md-input:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+}
+
+.md-input::placeholder {
+    color: var(--md-on-surface-variant);
+    opacity: 0.7;
+}
+
+.md-times {
+    color: var(--md-on-surface-variant);
+}
+
+.md-slider {
+    width: 100%;
+    margin: 0;
+    accent-color: var(--md-primary);
+    cursor: pointer;
+}
+
+/* Switch */
+.md-switch {
+    position: relative;
+    display: inline-flex;
+    cursor: pointer;
+}
+
+.md-switch input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.md-switch-track {
+    position: relative;
+    box-sizing: border-box;
+    width: 52px;
+    height: 32px;
+    border: 2px solid var(--md-outline);
+    border-radius: 16px;
+    background-color: var(--md-surface-container-highest);
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.md-switch-handle {
+    position: absolute;
+    top: 50%;
+    left: 6px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background-color: var(--md-outline);
+    transform: translateY(-50%);
+    transition: left 0.15s ease, width 0.15s ease, height 0.15s ease, background-color 0.15s ease;
+}
+
+.md-switch input:checked + .md-switch-track {
+    border-color: var(--md-primary);
+    background-color: var(--md-primary);
+}
+
+.md-switch input:checked + .md-switch-track .md-switch-handle {
+    left: 22px;
+    width: 24px;
+    height: 24px;
+    background-color: var(--md-on-primary);
+}
+
+.md-switch input:focus-visible + .md-switch-track {
+    outline: 2px solid var(--md-primary);
+    outline-offset: 2px;
+}
+
+/* Buttons */
+.md-button,
+.md-icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    box-sizing: border-box;
+    border: none;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.md-button {
+    height: 40px;
+    padding: 0 20px 0 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+
+.md-button svg {
+    width: 18px;
+    height: 18px;
+}
+
+.md-button-outlined {
+    border: 1px solid var(--md-outline);
+    color: var(--md-primary);
+    background-color: transparent;
+}
+
+.md-button-outlined:hover {
+    background-color: color-mix(in srgb, var(--md-primary) 8%, transparent);
+}
+
+.md-button-filled {
+    padding-right: 24px;
+    color: var(--md-on-primary);
+    background-color: var(--md-primary);
+}
+
+.md-button-filled:hover:not(:disabled) {
+    box-shadow: var(--md-elevation-1);
+    background-color: color-mix(in srgb, var(--md-primary) 92%, var(--md-on-primary));
+}
+
+.md-button-filled:disabled {
+    color: color-mix(in srgb, var(--md-on-surface) 38%, transparent);
+    background-color: color-mix(in srgb, var(--md-on-surface) 12%, transparent);
+    cursor: not-allowed;
+}
+
+.md-icon-button {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border-radius: 50%;
+    color: var(--md-on-surface-variant);
+    background-color: transparent;
+}
+
+.md-icon-button:hover {
+    background-color: color-mix(in srgb, var(--md-on-surface-variant) 10%, transparent);
+}
+
+.md-button-error {
+    padding-right: 24px;
+    color: var(--md-on-danger);
+    background-color: var(--md-danger);
+}
+
+.md-button-error:hover {
+    box-shadow: var(--md-elevation-1);
+    background-color: color-mix(in srgb, var(--md-danger) 88%, var(--md-on-danger));
+}
+

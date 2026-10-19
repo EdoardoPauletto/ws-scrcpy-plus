@@ -42,3 +42,225 @@
 .spoiler > input {
     display: none;
 }
+
+/* Android stream "more" menu (GoogMoreBox): Material 3 menu surface */
+.more-box.md-more-box {
+    top: 8px;
+    right: calc(var(--panel-width) + 8px);
+    box-sizing: border-box;
+    width: 340px;
+    max-width: calc(100% - var(--panel-width) - 16px);
+    max-height: calc(100% - 16px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 8px 0;
+    border-radius: 16px;
+    font-family: var(--md-font);
+    font-size: 14px;
+    color: var(--md-on-surface);
+    background-color: var(--md-surface-container);
+    box-shadow: var(--md-elevation-2);
+    color-scheme: light dark;
+}
+
+.md-more-box svg {
+    fill: currentColor;
+    flex-shrink: 0;
+}
+
+.md-more-box .more-header {
+    padding: 8px 16px 12px;
+}
+
+.md-more-box .more-title {
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 24px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.md-more-box .more-subtitle {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--md-on-surface-variant);
+}
+
+.md-more-box .more-section {
+    padding: 8px 0;
+    border-top: 1px solid var(--md-outline-variant);
+}
+
+.md-more-box .more-section-title {
+    padding: 4px 16px 8px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 16px;
+    letter-spacing: 0.03em;
+    color: var(--md-primary);
+}
+
+.md-more-box .md-textarea {
+    display: block;
+    box-sizing: border-box;
+    width: calc(100% - 32px);
+    min-height: 64px;
+    margin: 0 16px;
+    padding: 8px 12px;
+    border: 1px solid var(--md-outline);
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--md-on-surface);
+    background-color: transparent;
+    resize: vertical;
+}
+
+.md-more-box .md-textarea:focus {
+    border-color: var(--md-primary);
+    box-shadow: inset 0 0 0 1px var(--md-primary);
+}
+
+.md-more-box .md-textarea::placeholder {
+    color: var(--md-on-surface-variant);
+}
+
+/* Small buttons */
+.md-more-box .more-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 16px 0;
+}
+
+.md-more-box .more-actions .md-button {
+    height: 32px;
+    padding: 0 12px 0 8px;
+    border-radius: 16px;
+    font-size: 13px;
+}
+
+.md-more-box .md-button-tonal {
+    color: var(--md-on-secondary-container);
+    background-color: var(--md-secondary-container);
+}
+
+.md-more-box .md-button-tonal:hover {
+    background-color: color-mix(in srgb, var(--md-secondary-container) 88%, var(--md-on-secondary-container));
+}
+
+/* Menu items */
+.md-more-box .md-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 48px;
+    padding: 0 16px;
+    border: none;
+    font-family: inherit;
+    font-size: 14px;
+    text-align: left;
+    color: var(--md-on-surface);
+    background-color: transparent;
+    cursor: pointer;
+}
+
+.md-more-box .md-menu-item svg,
+.md-more-box .more-switch-row > svg {
+    width: 20px;
+    height: 20px;
+    color: var(--md-on-surface-variant);
+}
+
+.md-more-box .md-menu-item:hover {
+    background-color: color-mix(in srgb, var(--md-on-surface) 8%, transparent);
+}
+
+/* "Change video settings" (expandable) */
+.md-more-box .more-details > summary {
+    list-style: none;
+}
+
+.md-more-box .more-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.md-more-box .more-details .chevron {
+    margin-left: auto;
+    transition: transform 0.2s ease;
+}
+
+.md-more-box .more-details[open] .chevron {
+    transform: rotate(180deg);
+}
+
+.md-more-box .more-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 12px;
+    padding: 4px 16px 12px 48px;
+}
+
+.md-more-box .more-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.md-more-box .more-field label {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--md-on-surface-variant);
+}
+
+.md-more-box .more-field .md-input {
+    width: 100%;
+    max-width: none;
+    height: 36px;
+}
+
+.md-more-box .more-fields .more-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+    padding: 4px 0 0;
+}
+
+/* Switch rows */
+.md-more-box .more-switch-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 48px;
+    padding: 4px 16px;
+}
+
+.md-more-box .more-switch-text {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.md-more-box .more-supporting-text {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--md-on-surface-variant);
+}
+
+.md-more-box .more-supporting-text:empty {
+    display: none;
+}
+
+/* Disconnect */
+.md-more-box .more-footer {
+    padding: 12px 16px 8px;
+    border-top: 1px solid var(--md-outline-variant);
+}
+
+.md-more-box .more-footer .md-button {
+    width: 100%;
+}

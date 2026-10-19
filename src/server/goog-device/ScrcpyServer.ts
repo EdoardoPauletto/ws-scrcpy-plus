@@ -10,7 +10,10 @@ import { ServerVersion } from './ServerVersion';
 const TEMP_PATH = '/data/local/tmp/';
 const FILE_DIR = path.join(__dirname, 'vendor/Genymobile/scrcpy');
 const FILE_NAME = 'scrcpy-server.jar';
-const RUN_COMMAND = `CLASSPATH=${TEMP_PATH}${FILE_NAME} nohup app_process ${ARGS_STRING}`;
+// Distinct name on the device, to not overwrite the file pushed by the desktop scrcpy client
+const DEVICE_FILE_NAME = 'ws-scrcpy-server.jar';
+export const SERVER_JAR_PATH = `${TEMP_PATH}${DEVICE_FILE_NAME}`;
+const RUN_COMMAND = `CLASSPATH=${SERVER_JAR_PATH} nohup app_process ${ARGS_STRING}`;
 
 type WaitForPidParams = { tryCounter: number; processExited: boolean; lookPidFile: boolean };
 
@@ -18,7 +21,7 @@ export class ScrcpyServer {
     private static PID_FILE_PATH = '/data/local/tmp/ws_scrcpy.pid';
     private static async copyServer(device: Device): Promise<PushTransfer> {
         const src = path.join(FILE_DIR, FILE_NAME);
-        const dst = TEMP_PATH + FILE_NAME; // don't use path.join(): will not work on win host
+        const dst = TEMP_PATH + DEVICE_FILE_NAME; // don't use path.join(): will not work on win host
         return device.push(src, dst);
     }
 

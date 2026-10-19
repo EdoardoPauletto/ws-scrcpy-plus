@@ -9,6 +9,7 @@ import { ParamsStream } from '../../types/ParamsStream';
 
 const DEVICE_NAME_FIELD_LENGTH = 64;
 const MAGIC_BYTES_INITIAL = Util.stringToUtf8ByteArray('scrcpy_initial');
+const MAGIC_BYTES_AUDIO = Util.stringToUtf8ByteArray('scrcpy_audio__');
 
 export type ClientsStats = {
     deviceName: string;
@@ -24,6 +25,8 @@ export type DisplayCombinedInfo = {
 
 interface StreamReceiverEvents {
     video: ArrayBuffer;
+    // raw PCM: 48 kHz, stereo, signed 16-bit little-endian (empty: audio not available)
+    audio: ArrayBuffer;
     deviceMessage: DeviceMessage;
     displayInfo: DisplayCombinedInfo[];
     clientsStats: ClientsStats;
@@ -38,6 +41,8 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
     private events: ControlMessage[] = [];
     private encodersSet: Set<string> = new Set<string>();
     private clientId = -1;
+    // Display of the stream joined by this client (known once the device has created a new virtual display)
+    private joinedDisplayId = -1;
     private deviceName = '';
     private readonly displayInfoMap: Map<number, DisplayInfo> = new Map();
     private readonly connectionCountMap: Map<number, number> = new Map();
@@ -97,6 +102,7 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
             this.encodersSet.add(name);
         }
         this.clientId = rest.readInt32BE(0);
+        this.joinedDisplayId = rest.length >= 8 ? rest.readInt32BE(4) : -1;
         nameBytes = Util.filterTrailingZeroes(nameBytes);
         this.deviceName = Util.utf8ByteArrayToString(nameBytes);
         this.hasInitialInfo = true;
@@ -131,9 +137,13 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
 
     protected onSocketMessage(event: MessageEvent): void {
         if (event.data instanceof ArrayBuffer) {
-            // works only because MAGIC_BYTES_INITIAL and MAGIC_BYTES_MESSAGE have same length
-            if (event.data.byteLength > MAGIC_BYTES_INITIAL.length) {
+            // works only because MAGIC_BYTES_INITIAL, MAGIC_BYTES_MESSAGE and MAGIC_BYTES_AUDIO have same length
+            if (event.data.byteLength >= MAGIC_BYTES_INITIAL.length) {
                 const magicBytes = new Uint8Array(event.data, 0, MAGIC_BYTES_INITIAL.length);
+                if (StreamReceiver.EqualArrays(magicBytes, MAGIC_BYTES_AUDIO)) {
+                    this.emit('audio', event.data.slice(MAGIC_BYTES_AUDIO.length));
+                    return;
+                }
                 if (StreamReceiver.EqualArrays(magicBytes, MAGIC_BYTES_INITIAL)) {
                     this.handleInitialInfo(event.data);
                     return;
@@ -199,6 +209,10 @@ export class StreamReceiver<P extends ParamsStream> extends ManagerClient<Params
             });
             this.emit('displayInfo', infoArray);
         }
+    }
+
+    public getJoinedDisplayId(): number {
+        return this.joinedDisplayId;
     }
 
     public getDisplayInfo(displayId: number): DisplayInfo | undefined {

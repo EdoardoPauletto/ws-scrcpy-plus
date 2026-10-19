@@ -1,0 +1,66 @@
+/* Shareable stream link page (AppStreamLauncher): status while connecting, or an error */
+body.app-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--md-surface);
+}
+
+.app-link-status {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    box-sizing: border-box;
+    width: min(100% - 32px, 420px);
+    padding: 32px 24px;
+    border-radius: 16px;
+    font-family: var(--md-font);
+    font-size: 14px;
+    text-align: center;
+    color: var(--md-on-surface);
+    background-color: var(--md-surface-container-low);
+    box-shadow: var(--md-elevation-1);
+}
+
+.app-link-status svg {
+    fill: currentColor;
+}
+
+.app-link-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    color: var(--md-on-primary-container);
+    background-color: var(--md-primary-container);
+}
+
+.app-link-icon svg {
+    width: 32px;
+    height: 32px;
+}
+
+.app-link-title {
+    font-size: 20px;
+    line-height: 28px;
+    overflow-wrap: anywhere;
+}
+
+.app-link-text {
+    color: var(--md-on-surface-variant);
+}
+
+.app-link-status.error .app-link-icon {
+    color: var(--md-on-error-container);
+    background-color: var(--md-error-container);
+}
+
+.app-link-status a.md-button,
+.app-link-status a.md-button:visited {
+    margin-top: 8px;
+    color: var(--md-on-primary);
+    text-decoration: none;
+}

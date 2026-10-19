@@ -1,35 +1,25 @@
 :root {
-    --device-border-color: hsl(0, 0%, 82%);
-    --device-list-stripe-color: hsl(0, 0%, 96%);
-    --device-list-default-color: hsl(0, 0%, 100%);
-    --device-list-hover-color: hsl(218, 67%, 95%);
+    --device-card-radius: 16px;
 }
-
-@media (prefers-color-scheme: dark) {
-    :root {
-        --device-border-color: hsl(0, 0%, 32%);
-        --device-list-stripe-color: hsl(0, 0%, 16%);
-        --device-list-default-color: hsl(0, 0%, 14%);
-        --device-list-hover-color: hsl(218, 17%, 18%);
-    }
-}
-
 
 body.list {
     height: auto;
-    width: auto;
+    width: 100%;
     overflow: auto;
+    background-color: var(--md-surface);
 }
 
 #devices {
-    padding: 20px 0;
+    padding: 16px 0;
     width: 100%;
-    height: calc(100% - 40px);
+    height: calc(100% - 32px);
     overflow-y: auto;
+    font-family: var(--md-font);
+    color: var(--md-on-surface);
 }
 
 body.stream #devices {
-    background-color: var(--device-list-default-color);
+    background-color: var(--md-surface);
     opacity: .8;
     position: absolute;
     top: 0;
@@ -49,187 +39,507 @@ body.list #device_list_menu {
     z-index: 4;
 }
 
-#devices .device-list button {
-    font-size: var(--font-size);
-    color: var(--button-text-color);
+#devices svg {
+    fill: currentColor;
+    flex-shrink: 0;
 }
 
-#devices .device-list div.device:nth-child(2n+1){
-    background-color: var(--device-list-default-color);
-}
-
-#devices .device-list div.device:nth-child(2n){
-    background-color: var(--device-list-stripe-color);
-}
-
-#devices .device-header {
-    padding: 2px 0;
-}
-
-#devices .device-header div {
-    display: inline-flex;
-}
-
-#devices .device-name {
-    font-size: 120%;
-}
-
-#devices .device-model {
-    font-size: 110%;
-}
-
-#devices .device-serial {
-    color: var(--url-color);
-    font-size: 80%;
-    margin-left: 6px;
-}
-
-#devices .device-version {
-    font-size: 100%;
-    margin-left: 6px;
-    align-items: baseline;
-}
-
-#devices .device-version .sdk-version {
-    font-size: 75%;
-    color: var(--url-color);
-    margin-left: 0.2em;
-}
-
-#devices .device-state {
-    border-radius: 25px;
-    background-color: red;
-    font-size: 80%;
-    margin-left: 6px;
-    width: 1em;
-    height: 1em;
-}
-
-#devices .device.active .device-state {
-    background-color: green;
-}
-
+/* One block per host: the host title spans the whole row, cards flow in a responsive grid */
 #devices .device-list {
-    position: relative;
-    bottom: 0;
-    left: 0;
+    box-sizing: border-box;
     width: 100%;
-}
-
-#devices .device-list {
-    border-spacing: 0;
-    border-collapse: collapse;
-    font-family: monospace;
+    padding: 0 20px 16px;
     font-size: var(--font-size);
 }
 
-#devices .device-list div.device {
-    padding: 5px 20px 5px;
-}
-
-#devices .device-list div.device:hover {
-    background-color: var(--device-list-hover-color)
-}
-
-#devices .device-list div.device select {
-    color: var(--text-color);
-    background-color: var(--main-bg-color);
-    margin-left: 0;
-    border: none;
-}
-
-#devices .device-list div.device:hover select {
-    background-color: var(--device-list-hover-color);;
-}
-
-#devices .device-list div.desc-block {
-    margin: .3em;
-    display: inline-flex;
-}
-
-#devices .device-list div.desc-block.hidden {
-    display: none;
-}
-
-#devices .device-list div.desc-block.stream,
-#devices .device-list div.desc-block.server_pid,
-#devices .device-list div.desc-block.net_interface {
-    border: 1px solid var(--device-border-color);
-    border-radius: .3em;
-    overflow: hidden;
-    white-space: nowrap;
-}
-
-#devices .device-list div.device div.desc-block.stream button.action-button {
-    color: var(--button-text-color);
-}
-
-#devices .device-list div.desc-block button {
-    fill: var(--text-color)
-}
-
-#devices .device-list div.desc-block button > span {
-    padding: 0 .5em;
-}
-
-#devices .device-list div.desc-block button > span,
-#devices .device-list div.desc-block button > svg {
-    vertical-align: middle;
-}
-
-#devices .device-list div.desc-block button > svg {
-    width: var(--font-size);
-    height: var(--font-size);
-}
-
-#devices .device-list div.desc-block button > svg > path {
-    fill: var(--text-color);
-}
-
-#devices .device-list .device.not-active div.desc-block button > svg > path {
-    fill: var(--text-color-light);
-}
-
-#devices .device-list .device.not-active select {
-    color: var(--text-color-light);
-}
-
-#devices .device-list .device.not-active {
-    color: var(--text-color-light);
-}
-
-#devices .device-list .device.not-active a {
-    color: var(--link-color-light);
-}
-
-#devices .device-list .device.not-active a:visited {
-    color: var(--link-color_visited-light);
-}
-
-#devices .device-list div.device div.desc-block .action-button {
-    border: none;
-    background-color: rgba(0, 0, 0, 0);
-    color: inherit;
-}
-
-#devices .device-list div.device div.desc-block .action-button.update-interfaces-button {
-    margin-right: 0;
-}
-
-#devices .device-list div.device div.desc-block .action-button.active {
-    cursor: pointer;
-}
-
-#devices .device-list .device.active div.desc-block .action-button:hover {
-    color: var(--kill-button-hover-color);
-}
-
-#devices .device-list .device.active div.desc-block button.action-button:hover > svg > path {
-    fill: var(--kill-button-hover-color);
+#devices .device-list > div {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
 }
 
 #devices .tracker-name {
-    padding: 5px 20px 5px;
-    font-size: larger;
-    font-weight: bolder;
+    grid-column: 1 / -1;
+    padding: 8px 4px 0;
+    font-size: 22px;
+    font-weight: 400;
+    line-height: 28px;
+    color: var(--md-on-surface);
+}
+
+/* Card */
+#devices .device-list div.device {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 16px;
+    border-radius: var(--device-card-radius);
+    background-color: var(--md-surface-container-low);
+    box-shadow: var(--md-elevation-1);
+    transition: box-shadow 0.2s ease;
+}
+
+#devices .device-list div.device:hover {
+    box-shadow: var(--md-elevation-2);
+}
+
+/* Header: avatar, name + serial, status chip */
+#devices .device-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 16px;
+}
+
+#devices .device-avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background-color: var(--md-primary-container);
+    color: var(--md-on-primary-container);
+}
+
+#devices .device-avatar svg {
+    width: 26px;
+    height: 26px;
+}
+
+#devices .device-title {
+    min-width: 0;
+}
+
+#devices .device-name {
+    font-size: 18px;
+    font-weight: 500;
+    line-height: 24px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#devices .device-serial {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+    font-size: 13px;
+    color: var(--md-on-surface-variant);
+}
+
+#devices .device-serial svg {
+    width: 16px;
+    height: 16px;
+}
+
+#devices .device-serial-value {
+    font-family: var(--md-font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#devices .device-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 14px;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    background-color: var(--md-success-container);
+    color: var(--md-on-success-container);
+}
+
+#devices .device.not-active .device-status {
+    background-color: var(--md-error-container);
+    color: var(--md-on-error-container);
+}
+
+#devices .device-state {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--md-error);
+}
+
+#devices .device.active .device-state {
+    background-color: var(--md-success);
+}
+
+/* Why a device is not usable (unauthorized, offline, ...) */
+#devices .device-hint {
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 20px;
+    background-color: var(--md-error-container);
+    color: var(--md-on-error-container);
+}
+
+#devices .device-hint:empty {
+    display: none;
+}
+
+/* Info tiles: icon + label + value */
+#devices .device-info {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+}
+
+#devices .device-field {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    padding: 8px 12px;
+    border-radius: 12px;
+    background-color: var(--md-surface-container);
+}
+
+#devices .device-field .field-icon {
+    display: flex;
+    color: var(--md-primary);
+}
+
+#devices .device-field .field-icon svg {
+    width: 20px;
+    height: 20px;
+}
+
+#devices .device-field .field-text {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+
+#devices .device-field .field-label {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--md-on-surface-variant);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#devices .device-field .field-value {
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 20px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#devices .device-field.server_pid {
+    padding-right: 4px;
+}
+
+#devices .device-field.server_pid .field-value {
+    font-family: var(--md-font-mono);
+}
+
+#devices .device-list .device-field.server_pid button.icon-button {
+    width: 32px;
+    height: 32px;
+    margin: 0;
+}
+
+/* Buttons (shared) */
+#devices .device-list button,
+#devices .device-list .desc-block > a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    box-sizing: border-box;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    text-decoration: none;
+    white-space: nowrap;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#devices .device-list button svg,
+#devices .device-list .desc-block > a svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* Icon button (start/kill server, refresh interfaces) */
+#devices .device-list button.icon-button {
+    width: 40px;
+    height: 40px;
+    margin: -8px -8px -8px 0;
+    padding: 0;
+    border-radius: 50%;
+    background-color: transparent;
+    color: var(--md-on-surface-variant);
+}
+
+#devices .device-list button.icon-button svg {
+    width: 20px;
+    height: 20px;
+}
+
+#devices .device-list button.icon-button.active:hover {
+    background-color: color-mix(in srgb, var(--md-on-surface-variant) 10%, transparent);
+}
+
+#devices .device-list button.kill-server-button.active[data-command='kill_server']:hover {
+    color: var(--md-error);
+    background-color: color-mix(in srgb, var(--md-error) 10%, transparent);
+}
+
+#devices .device-list button.icon-button:not(.active) {
+    cursor: default;
+}
+
+/* Stream section: filled "Configure stream", outlined interface picker, player chips */
+#devices .device-list .services-stream {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+#devices .device-list .services-stream:empty,
+#devices .device-list .device.not-active .services-stream {
+    display: none;
+}
+
+#devices .device-list .desc-block.hidden {
+    display: none;
+}
+
+#devices .device-list .desc-block.stream button {
+    height: 40px;
+    padding: 0 24px 0 16px;
+    border-radius: 20px;
+    background-color: var(--md-primary);
+    color: var(--md-on-primary);
+}
+
+#devices .device-list .desc-block.stream button:hover {
+    box-shadow: var(--md-elevation-1);
+    background-color: color-mix(in srgb, var(--md-primary) 92%, var(--md-on-primary));
+}
+
+#devices .device-list .desc-block.net_interface {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 40px;
+    box-sizing: border-box;
+    padding: 0 8px 0 12px;
+    border: 1px solid var(--md-outline);
+    border-radius: 20px;
+    color: var(--md-on-surface-variant);
+}
+
+#devices .device-list .desc-block.net_interface > svg {
+    width: 18px;
+    height: 18px;
+}
+
+#devices .device-list .desc-block.net_interface button.icon-button {
+    width: 32px;
+    height: 32px;
+    margin: 0;
+}
+
+#devices .device-list .desc-block.net_interface button.icon-button svg {
+    width: 18px;
+    height: 18px;
+}
+
+#devices .device-list .device.not-active .desc-block.net_interface {
+    display: none;
+}
+
+#devices .device-list div.device select {
+    max-width: 220px;
+    padding: 0;
+    border: none;
+    outline: none;
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--md-on-surface);
+    background-color: transparent;
+    cursor: pointer;
+}
+
+#devices .device-list div.device select option {
+    color: var(--md-on-surface);
+    background-color: var(--md-surface-container-high);
+}
+
+#devices .device-list .stream-players {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    flex-basis: 100%;
+}
+
+#devices .device-list .stream-players:not(:has(a)) {
+    display: none;
+}
+
+#devices .device-list .stream-players .desc-block:empty {
+    display: none;
+}
+
+#devices .device-list .stream-players .desc-block > a {
+    height: 32px;
+    padding: 0 16px 0 8px;
+    border-radius: 8px;
+    border: 1px solid var(--md-outline-variant);
+    color: var(--md-on-surface);
+}
+
+#devices .device-list .stream-players .desc-block > a svg {
+    color: var(--md-primary);
+}
+
+#devices .device-list .stream-players .desc-block > a:hover {
+    background-color: color-mix(in srgb, var(--md-on-surface) 8%, transparent);
+}
+
+/* Card actions: text buttons for the extra tools */
+#devices .device-list .services-tools {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px;
+    margin: 0 -8px -8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--md-outline-variant);
+}
+
+#devices .device-list .services-tools:empty {
+    display: none;
+}
+
+#devices .device-list .services-tools .desc-block > a {
+    height: 40px;
+    padding: 0 16px 0 12px;
+    border-radius: 20px;
+    color: var(--md-primary);
+}
+
+#devices .device-list .services-tools .desc-block > a:hover {
+    background-color: color-mix(in srgb, var(--md-primary) 8%, transparent);
+}
+
+/* Offline devices: muted avatar and text */
+#devices .device-list .device.not-active .device-avatar {
+    background-color: var(--md-surface-container-highest);
+    color: var(--md-on-surface-variant);
+}
+
+#devices .device-list .device.not-active .device-name,
+#devices .device-list .device.not-active .field-value {
+    color: var(--md-on-surface-variant);
+}
+
+#devices .device-list .device.not-active .field-icon {
+    color: var(--md-outline);
+}
+
+/* Empty state: shown in place of the cards when a host has no devices */
+#devices .device-list-empty {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 40px 24px;
+    border-radius: var(--device-card-radius);
+    background-color: var(--md-surface-container-low);
+    box-shadow: var(--md-elevation-1);
+    text-align: center;
+}
+
+#devices .device-list-empty .empty-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    background-color: var(--md-surface-container-highest);
+    color: var(--md-on-surface-variant);
+}
+
+#devices .device-list-empty .empty-icon svg {
+    width: 36px;
+    height: 36px;
+}
+
+#devices .device-list-empty .empty-title {
+    font-size: 22px;
+    line-height: 28px;
+}
+
+#devices .device-list-empty .empty-hint {
+    max-width: 640px;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--md-on-surface-variant);
+}
+
+#devices .device-list-empty .empty-hint:empty {
+    display: none;
+}
+
+#devices .device-list-empty ul {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    text-align: left;
+}
+
+#devices .device-list-empty li {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+#devices .device-list-empty .hint-icon {
+    display: flex;
+    color: var(--md-primary);
+}
+
+#devices .device-list-empty .hint-icon svg {
+    width: 20px;
+    height: 20px;
+}
+
+#devices .device-list-empty code {
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: var(--md-font-mono);
+    font-size: 13px;
+    color: var(--md-on-surface);
+    background-color: var(--md-surface-container-high);
+    overflow-wrap: anywhere;
+}
+
+#devices .device-list-empty .empty-note {
+    margin-top: 16px;
+    font-size: 12px;
 }

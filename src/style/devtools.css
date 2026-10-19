@@ -121,3 +121,100 @@ body.devtools .tooltip {
     color: var(--controls-bg-color);
     background-color: var(--text-color);
 }
+
+/* Empty state: no browser or WebView to inspect on the device */
+body.devtools .devtools-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    max-width: 640px;
+    margin: 24px auto 0;
+    padding: 40px 24px;
+    border-radius: 16px;
+    font-family: var(--md-font);
+    font-size: 14px;
+    line-height: 20px;
+    text-align: center;
+    color: var(--md-on-surface);
+    background-color: var(--md-surface-container-low);
+    box-shadow: var(--md-elevation-1);
+}
+
+body.devtools .devtools-empty svg {
+    fill: currentColor;
+    flex-shrink: 0;
+}
+
+body.devtools .devtools-empty .empty-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    color: var(--md-on-surface-variant);
+    background-color: var(--md-surface-container-highest);
+}
+
+body.devtools .devtools-empty .empty-icon svg {
+    width: 36px;
+    height: 36px;
+}
+
+body.devtools .devtools-empty .empty-title {
+    font-size: 22px;
+    line-height: 28px;
+}
+
+body.devtools .devtools-empty .empty-text,
+body.devtools .devtools-empty .empty-note {
+    color: var(--md-on-surface-variant);
+}
+
+body.devtools .devtools-empty ul {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+    text-align: left;
+    color: var(--md-on-surface-variant);
+}
+
+body.devtools .devtools-empty li {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+body.devtools .devtools-empty b {
+    font-weight: 500;
+    color: var(--md-on-surface);
+}
+
+body.devtools .devtools-empty .hint-icon {
+    display: flex;
+    color: var(--md-primary);
+}
+
+body.devtools .devtools-empty .hint-icon svg {
+    width: 20px;
+    height: 20px;
+}
+
+body.devtools .devtools-empty code {
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: var(--md-font-mono);
+    font-size: 13px;
+    color: var(--md-on-surface);
+    background-color: var(--md-surface-container-high);
+    overflow-wrap: anywhere;
+}
+
+body.devtools .devtools-empty .empty-note {
+    margin-top: 16px;
+    font-size: 12px;
+}

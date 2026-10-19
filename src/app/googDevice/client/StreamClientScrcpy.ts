@@ -18,6 +18,7 @@ import { ConfigureScrcpy } from './ConfigureScrcpy';
 import { DeviceTracker } from './DeviceTracker';
 import { ControlCenterCommand } from '../../../common/ControlCenterCommand';
 import { html } from '../../ui/HtmlTag';
+import SvgImage from '../../ui/SvgImage';
 import {
     FeaturedInteractionHandler,
     InteractionHandlerListener,
@@ -30,6 +31,7 @@ import { ACTION } from '../../../common/Action';
 import { StreamReceiverScrcpy } from './StreamReceiverScrcpy';
 import { ParamsDeviceTracker } from '../../../types/ParamsDeviceTracker';
 import { ScrcpyFilePushStream } from '../filePush/ScrcpyFilePushStream';
+import { PcmAudioPlayer } from '../../player/PcmAudioPlayer';
 
 type StartParams = {
     udid: string;
@@ -59,6 +61,9 @@ export class StreamClientScrcpy
     private player?: BasePlayer;
     private filePushHandler?: FilePushHandler;
     private fitToScreen?: boolean;
+    private audioPlayer?: PcmAudioPlayer;
+    // last size requested for a flex display
+    private requestedDisplaySize?: Size;
     private readonly streamReceiver: StreamReceiverScrcpy;
 
     public static registerPlayer(playerClass: PlayerClass): void {
@@ -113,18 +118,7 @@ export class StreamClientScrcpy
     }
 
     private static createVideoSettingsWithBounds(old: VideoSettings, newBounds: Size): VideoSettings {
-        return new VideoSettings({
-            crop: old.crop,
-            bitrate: old.bitrate,
-            bounds: newBounds,
-            maxFps: old.maxFps,
-            iFrameInterval: old.iFrameInterval,
-            sendFrameMeta: old.sendFrameMeta,
-            lockedVideoOrientation: old.lockedVideoOrientation,
-            displayId: old.displayId,
-            codecOptions: old.codecOptions,
-            encoderName: old.encoderName,
-        });
+        return new VideoSettings({ ...old.toJSON(), bounds: newBounds });
     }
 
     protected constructor(
@@ -166,6 +160,8 @@ export class StreamClientScrcpy
             ws: Util.parseString(params, 'ws', true),
             captureKeyboard: Util.parseBoolean(params, 'captureKeyboard', false),
             fitToScreen: params.has('fitToScreen') ? Util.parseBoolean(params, 'fitToScreen') : undefined,
+            audio: Util.parseBoolean(params, 'audio', false),
+            audioDup: Util.parseBoolean(params, 'audioDup', false),
         };
     }
 
@@ -188,6 +184,14 @@ export class StreamClientScrcpy
         }
     };
 
+    public onAudio = (data: ArrayBuffer): void => {
+        if (!data.byteLength) {
+            console.warn(TAG, 'The device audio could not be captured (Android 11+ required)');
+            return;
+        }
+        this.audioPlayer?.push(data);
+    };
+
     public onClientsStats = (stats: ClientsStats): void => {
         this.deviceName = stats.deviceName;
         this.clientId = stats.clientId;
@@ -199,6 +203,20 @@ export class StreamClientScrcpy
             return;
         }
         let currentSettings = this.player.getVideoSettings();
+        if (currentSettings.displayId === VideoSettings.DISPLAY_ID_NEW) {
+            // The device assigns the id of the new virtual display: follow it once known
+            const joinedDisplayId = this.streamReceiver.getJoinedDisplayId();
+            if (joinedDisplayId === VideoSettings.DISPLAY_ID_NEW) {
+                if (!this.joinedStream) {
+                    this.joinedStream = true;
+                    this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(currentSettings));
+                }
+                return;
+            }
+            currentSettings = new VideoSettings({ ...currentSettings.toJSON(), displayId: joinedDisplayId });
+            this.player.setVideoSettings(currentSettings, !!this.fitToScreen, false);
+            this.requestedVideoSettings = currentSettings;
+        }
         const displayId = currentSettings.displayId;
         const info = infoArray.find((value) => {
             return value.displayInfo.displayId === displayId;
@@ -214,7 +232,7 @@ export class StreamClientScrcpy
         if (typeof this.fitToScreen !== 'boolean') {
             this.fitToScreen = this.player.getFitToScreenStatus();
         }
-        if (this.fitToScreen) {
+        if (this.fitToScreen && !currentSettings.flexDisplay) {
             const newBounds = this.getMaxSize();
             if (newBounds) {
                 currentSettings = StreamClientScrcpy.createVideoSettingsWithBounds(currentSettings, newBounds);
@@ -254,7 +272,21 @@ export class StreamClientScrcpy
             this.joinedStream = true;
             this.sendMessage(CommandControlMessage.createSetVideoSettingsCommand(min));
         }
+        if (currentSettings.flexDisplay && !this.requestedDisplaySize) {
+            // The virtual display is created with an estimated size: adjust it to the actual video area
+            this.resizeFlexDisplay();
+        }
     };
+
+    // A flex virtual display follows the size of the video area
+    private resizeFlexDisplay(): void {
+        const size = this.getMaxSize();
+        if (!size || !size.width || !size.height || size.equals(this.requestedDisplaySize)) {
+            return;
+        }
+        this.requestedDisplaySize = size;
+        this.sendMessage(CommandControlMessage.createResizeDisplayCommand(size.width, size.height));
+    }
 
     public onDisconnected = (): void => {
         this.streamReceiver.off('deviceMessage', this.OnDeviceMessage);
@@ -263,6 +295,9 @@ export class StreamClientScrcpy
         this.streamReceiver.off('displayInfo', this.onDisplayInfo);
         this.streamReceiver.off('disconnected', this.onDisconnected);
 
+        this.streamReceiver.off('audio', this.onAudio);
+        this.audioPlayer?.release();
+        this.audioPlayer = undefined;
         this.filePushHandler?.release();
         this.filePushHandler = undefined;
         this.touchHandler?.release();
@@ -323,6 +358,13 @@ export class StreamClientScrcpy
             if (this.player) {
                 this.player.stop();
             }
+            this.audioPlayer?.release();
+            this.audioPlayer = undefined;
+            // Back to the device list. Routing only happens on page load, so load the page without the
+            // "#!action=stream" hash (when the stream was opened from the list there is no hash: it reloads).
+            // A shareable link page (<device>/<package>) goes back to the root of the app.
+            const home = document.querySelector('base') ? new URL(document.baseURI).pathname : location.pathname;
+            window.location.assign(`${home}${location.search}`);
         };
 
         const googMoreBox = (this.moreBox = new GoogMoreBox(udid, player, this));
@@ -359,6 +401,11 @@ export class StreamClientScrcpy
         streamReceiver.on('clientsStats', this.onClientsStats);
         streamReceiver.on('displayInfo', this.onDisplayInfo);
         streamReceiver.on('disconnected', this.onDisconnected);
+        if (this.params.audio) {
+            this.audioPlayer = new PcmAudioPlayer();
+            streamReceiver.on('audio', this.onAudio);
+            this.sendMessage(CommandControlMessage.createSetAudioCommand(true, !!this.params.audioDup));
+        }
         console.log(TAG, player.getName(), udid);
 
         // When the player is in fit-to-screen mode, re-encode the stream at the
@@ -379,6 +426,10 @@ export class StreamClientScrcpy
 
     private applyFitToScreenBounds = (): void => {
         this.resizeTimeoutId = undefined;
+        if (this.player && this.player.getVideoSettings().flexDisplay) {
+            this.resizeFlexDisplay();
+            return;
+        }
         if (!this.player || !this.player.getFitToScreenStatus()) {
             return;
         }
@@ -483,7 +534,10 @@ export class StreamClientScrcpy
                 </button>
             </div>`;
             const a = e.content.getElementById(configureButtonId);
-            a && (a.onclick = this.onConfigureStreamClick);
+            if (a) {
+                a.onclick = this.onConfigureStreamClick;
+                a.prepend(SvgImage.create(SvgImage.Icon.CAST));
+            }
             return e.content;
         }
         return;

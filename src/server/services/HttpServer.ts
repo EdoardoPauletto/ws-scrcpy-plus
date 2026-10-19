@@ -84,6 +84,11 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
             const { MjpegProxyFactory } = await import('../mw/MjpegProxyFactory');
             this.mainApp.get('/mjpeg/:udid', new MjpegProxyFactory().proxyRequest);
             /// #endif
+
+            /// #if INCLUDE_GOOG
+            const { AppLinks } = await import('../goog-device/AppLinks');
+            AppLinks.register(this.mainApp, PATHNAME, HttpServer.PUBLIC_DIR);
+            /// #endif
         }
         const config = Config.getInstance();
         config.servers.forEach((serverItem) => {
