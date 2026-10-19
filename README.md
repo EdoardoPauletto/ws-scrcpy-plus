@@ -1,6 +1,83 @@
-# ws scrcpy
+# ws-scrcpy-plus
 
-Web client for [Genymobile/scrcpy][scrcpy] and more.
+> **[ws-scrcpy-plus][repo] is a fork of [NetrisTV/ws-scrcpy][upstream]**, the original web client
+> for [Genymobile/scrcpy][scrcpy] by NetrisTV. It keeps the same architecture and
+> most of the original documentation below, and adds an up-to-date device
+> server, a redesigned interface, virtual displays with app launch, shareable
+> stream links and a Docker/Podman image. See
+> [What's different from the original](#whats-different-from-the-original).
+
+## In short
+
+**ws-scrcpy mirrors and controls Android devices from a web browser.** Connect
+your phone to the computer running ws-scrcpy (USB or Wi-Fi debugging), open
+`http://<computer>:8000` from any browser on your network, pick the device and
+use it: touch, keyboard, clipboard, audio, file transfer, shell and DevTools.
+
+What this fork adds:
+
+* **Shareable stream links** - `http://<computer>:8000/<device>/<package>`
+  (e.g. `/SM-S908B/com.android.chrome`) opens the app on a virtual display of the
+  device, **creating the stream if it is not running yet** or joining it if it
+  is. Configure a stream once, then open the same link from a tablet, another PC
+  or a bookmark. See [Shareable stream links](#shareable-stream-links).
+* **New virtual display + app launch** - stream a separate virtual screen of
+  the device (Android 10+) and choose which installed app starts on it, from the
+  real list of the apps of the device. With **flex display** it follows the size
+  of the browser window.
+* **Up-to-date device server** - official scrcpy **v5.0.1** with a WebSocket
+  patch (the original used a scrcpy 1.19 fork): audio forwarding, keep screen
+  on, virtual displays.
+* **Material 3 interface** - device cards, "Configure stream" side sheet with a
+  tooltip for every option, stream menu, light and dark theme, empty states that
+  explain what to do.
+* **Docker / Podman image** - `docker compose up -d --build` and you are done
+  (Android only).
+
+Quick start:
+
+```shell
+docker compose up -d --build                                   # or: podman-compose up -d --build
+docker compose exec ws-scrcpy adb connect 192.168.1.10:5555    # a device on Wi-Fi debugging
+# then open http://localhost:8000
+```
+
+### Screenshots
+
+The device list, in the light and dark theme:
+
+![Device list](docs/screenshots/device-list.png)
+
+"Configure stream": a new virtual display running an app picked from the device,
+opened in a new tab through its shareable link:
+
+![Configure stream](docs/screenshots/configure-stream.png)
+
+Every option has a tooltip:
+
+![Tooltip](docs/screenshots/configure-tooltip.png)
+
+A stream opened from a shareable link (the Calculator app on a virtual display),
+with the stream menu:
+
+![Stream from a shareable link](docs/screenshots/app-link-stream.png)
+
+## What's different from the original
+
+| Area | [NetrisTV/ws-scrcpy][upstream] | This fork |
+| --- | --- | --- |
+| Device server | scrcpy 1.19 fork with a WebSocket server | Official scrcpy v5.0.1 + a [patch](/scrcpy-server/patches) (`5.0.1-ws2`), rebuilt in a container |
+| Displays | Existing displays | Also a **new virtual display** (fixed size or **flex**), with an **app** started on it |
+| Links | `#!action=stream&udid=...` links, per player | Also **shareable links** `/<device>/<package>` that create or join the stream |
+| Audio | - | Device audio in the browser (Android 11+), optionally kept on the device |
+| Keep screen on | - | `scrcpy --keep-active` |
+| Interface | Original tables and buttons | Material 3 cards, side sheet with tooltips, stream menu, light/dark theme, empty states for the device list and DevTools |
+| Disconnect | Left an empty page | Goes back to the device list |
+| Deployment | Node.js on the host | Also a Docker/Podman image with `adb` |
+| HTTP API | - | App list and device lookup (see [HTTP API](#http-api)) |
+
+iOS support is the same as upstream (not included in the default build, nor in
+the container image).
 
 ## Requirements
 
@@ -10,8 +87,8 @@ Browser must support the following technologies:
 * WebWorkers
 * WebAssembly
 
-Server:
-* Node.js v10+
+Server (not needed with [Docker / Podman](#docker--podman)):
+* Node.js (the container image uses v22)
 * node-gyp ([installation](https://github.com/nodejs/node-gyp#installation))
 * `adb` executable must be available in the PATH environment variable
 
@@ -21,6 +98,7 @@ Device:
 * On some devices, you also need to enable
 [an additional option](https://github.com/Genymobile/scrcpy/issues/70#issuecomment-373286323)
 to control it using keyboard and mouse.
+* Android 10+ for virtual displays, Android 11+ for audio
 
 ## Build and Start
 
@@ -28,20 +106,86 @@ Make sure you have installed [node.js](https://nodejs.org/en/download/),
 [node-gyp](https://github.com/nodejs/node-gyp) and
 [build tools](https://github.com/nodejs/node-gyp#installation)
 ```shell
-git clone https://github.com/NetrisTV/ws-scrcpy.git
-cd ws-scrcpy
-
-## For stable version find latest tag and switch to it:
-# git tag -l
-# git checkout vX.Y.Z
-
+git clone https://github.com/EdoardoPauletto/ws-scrcpy-plus.git
+cd ws-scrcpy-plus
 npm install
 npm start
+```
+
+## Docker / Podman
+
+The image bundles Node.js and `adb` (Android only; iOS is not supported in the
+container). It builds the app in a first stage and runs `dist/` in a slim image;
+the adb server runs inside the container.
+
+```shell
+docker compose up -d --build        # Podman: podman-compose up -d --build
+```
+
+Then open http://localhost:8000 (or `http://<computer IP>:8000` from another
+device of your network).
+
+### Connecting devices
+
+Over Wi-Fi:
+
+```shell
+# Android 11+: Developer options -> Wireless debugging -> "Pair device with
+# pairing code", then pair and connect from inside the running container
+docker compose exec ws-scrcpy adb pair 192.168.1.10:37123 123456
+docker compose exec ws-scrcpy adb connect 192.168.1.10:41234
+
+# older Android: run `adb tcpip 5555` once over USB, then
+docker compose exec ws-scrcpy adb connect 192.168.1.10:5555
+
+docker compose exec ws-scrcpy adb devices
+```
+
+The first time, accept the debugging authorization prompt on the device. The
+adb keys are kept in the `adb-keys` volume, so the device stays authorized
+across rebuilds; the connections themselves are not: after recreating the
+container, connect again (or list the devices in `ADB_CONNECT`).
+
+Over USB (stop the host adb server first, `adb kill-server`; with rootless
+Podman the USB device nodes must also be accessible to your user):
+
+```shell
+docker compose -f docker-compose.yml -f docker-compose.usb.yml up -d --build
+```
+
+### Configuration
+
+* `ADB_CONNECT` - optional comma-separated `host[:port]` list connected on
+startup (handy for devices with a fixed address and port)
+* `WS_SCRCPY_PORT` - host port to publish (default `8000`)
+* to use a [run configuration](#run-configuration), uncomment the
+`WS_SCRCPY_CONFIG` lines in `docker-compose.yml`
+* [build configuration](#custom-build) overrides are applied at image build
+
+### Podman
+
+The same files work with Podman. Use `podman-compose` (on some systems
+`podman compose` delegates to `docker-compose`, which needs a `docker` binary):
+
+```shell
+podman-compose up -d --build
+podman exec -it ws-scrcpy_ws-scrcpy_1 adb connect 192.168.1.10:5555
+podman-compose down          # stop; `up -d --build` again to update
 ```
 
 ## Supported features
 
 ### Android
+
+#### Device list and configuration
+Each device is a card with its name, serial or IP address, Android version,
+API level and the state of the device server, and the actions: **Configure
+stream**, direct links for each player, Shell, DevTools and Files. When no
+device is connected, the page explains how to connect one.
+
+**Configure stream** opens a side sheet with all the stream options (player,
+display, virtual display, app, audio, quality, size, encoder); the ⓘ button of
+each option explains it. The settings can be saved per player and display.
 
 #### Screen casting
 The modified [version][fork] of [Genymobile/scrcpy][scrcpy] used to stream
@@ -87,6 +231,70 @@ current point
 * Copy to/from device clipboard
 * Device "rotation"
 
+#### New virtual display
+Like `scrcpy --new-display`: in "Configure stream", choose
+**New virtual display** as the display (optionally with its width, height and
+DPI; by default it has the size of the device screen). The apps launched there
+run on this separate display while the device screen stays usable. The display
+is destroyed (with the apps on it) when the last client watching it disconnects.
+Requires Android 10+.
+
+With **Flex display** (`scrcpy --flex-display`) the virtual display takes the
+size of the browser window and is resized with it. When several clients watch
+the same flex display, the last one that connects or resizes its window sets
+its size.
+
+**App**: the app started on the virtual display (like `scrcpy --start-app`),
+picked from the launchable apps of the device (user apps and system apps,
+listed by the device server). If the list cannot be loaded, type the Android
+package name (e.g. `com.android.chrome`). Empty: the home screen.
+
+#### Shareable stream links
+With a new virtual display and an app, enable **Open in a new tab**: the
+stream opens in a new browser tab at its shareable link, shown (with a copy
+button) in "Configure stream":
+
+```
+http://<computer>:8000/<device>/<package>
+http://192.168.1.20:8000/SM-S908B/com.android.chrome
+```
+
+* `<device>` is the model of the device (spaces become `-`, case does not
+matter), so that the link survives the port changes of wireless debugging. If
+two connected devices have the same model, their serial (or `IP:port`) is used
+instead.
+* Opening a link (from any device of the network, a bookmark, another
+browser...):
+    * if a virtual display of that device is already showing that app, the
+    page **joins the same stream**, with its current settings;
+    * otherwise it **creates the stream**: a new virtual display with the app
+    started on it. With the settings of "Configure stream" for the tab opened
+    from it, otherwise a flex display that follows the window, with the last
+    player used in that browser (or the best one available).
+* The device server is started if it is not running yet.
+* The link uses the address of the page it was created from: open the device
+list with the IP address of the computer (not `localhost`) to get a link that
+works on the other devices.
+* Disconnecting (stream menu) goes back to the device list.
+
+#### Stream menu
+The **⋯** button of the stream tool box opens a menu to type text on the
+device, get or set its clipboard, open the notification or settings panel,
+rotate it, change the video settings while streaming, turn the physical screen
+off, show the quality statistics and **Disconnect**, which closes the stream
+and goes back to the device list.
+
+#### Audio
+Enable **Audio** in "Configure stream" to play the device audio in the browser
+(Android 11+, sent as raw PCM: about 1.5 Mbit/s). By default the device stops
+playing it while it is forwarded; **Keep audio on device**
+(`scrcpy --audio-dup`, Android 13+) keeps it playing on both. Browsers start
+the audio after the first click or key press on the page.
+
+#### Keep screen on
+**Keep screen on** (`scrcpy --keep-active`) prevents the device screen from
+turning off for inactivity while streaming.
+
 #### File push
 Drag & drop an APK file to push it to the `/data/local/tmp` directory. You can
 install it manually from the included [xtermjs/xterm.js][xterm.js] terminal
@@ -96,7 +304,8 @@ emulator (see below).
 Control your device from `adb shell` in your browser.
 
 #### Debug WebPages/WebView
-[/docs/Devtools.md](/docs/Devtools.md)
+[/docs/Devtools.md](/docs/Devtools.md). When nothing can be inspected, the page
+explains how to make Chrome tabs and WebViews of the apps appear.
 
 #### File listing
 * List files
@@ -187,6 +396,17 @@ on its own.
 > ws-scrcpy. Run with `WS_SCRCPY_DEBUG=1` to surface the underlying xcodebuild
 > error and follow the [real-device configuration guide][wda-real-device].
 
+## HTTP API
+
+Used by the interface and the shareable links (Android, relative to the
+pathname of the server, CORS enabled):
+
+| Request | Response |
+| --- | --- |
+| `GET /api/goog/devices/<device>` | `{udid, model, manufacturer}` of a connected device (`<device>`: serial or model as in the links); starts the device server if needed. 404 if not connected |
+| `GET /api/goog/devices/<device>/apps` | `[{name, packageName, system}]`: the launchable apps (cached 5 minutes, `?refresh` to reload) |
+| `GET /<device>/<package>` | The app page opening that [shareable link](#shareable-stream-links) |
+
 ## Custom Build
 
 You can customize project before build by overriding the
@@ -247,8 +467,12 @@ Be advised and keep in mind:
 for connections on all network interfaces (see [custom build](#custom-build)).
 * The modified version of scrcpy will keep running after the last client
 disconnected.
+* Anybody who can reach the server can open the [shareable links](#shareable-stream-links)
+and the [HTTP API](#http-api): list the apps, start the device server, start
+apps on virtual displays and control them.
 
 ## Related projects
+* [NetrisTV/ws-scrcpy][upstream] (the original project)
 * [Genymobile/scrcpy][scrcpy]
 * [xevokk/h264-converter][xevokk/h264-converter]
 * [131/h264-live-player][h264-live-player]
@@ -258,13 +482,53 @@ disconnected.
 * [udevbe/tinyh264][tinyh264]
 * [danielpaulus/quicktime_video_hack][qvh]
 
-## scrcpy websocket fork
+## scrcpy websocket server
 
-Currently, support of WebSocket protocol added to v1.19 of scrcpy
+The device server is [scrcpy][scrcpy] v5.0.1 with a WebSocket server added
+(as the [NetrisTV fork][fork] did for v1.19):
 * [Prebuilt package](/vendor/Genymobile/scrcpy/scrcpy-server.jar)
-* [Source code][fork]
+* [Patch](/scrcpy-server/patches) on top of the official sources
+
+To rebuild the package (in a container, with podman or docker):
+```shell
+scrcpy-server/build.sh
+```
+
+The server is started on the device as
+`app_process / com.genymobile.scrcpy.Server 5.0.1-ws2 web <log level> <port> <listen on all interfaces>`.
+Each stream reuses the scrcpy capture, encoder and controller, and is shared by
+all the clients watching the same display. A newer version (`-wsN` suffix)
+replaces the server running on the device automatically.
+
+The stream settings sent by a client may name an app (`startApp`): once the new
+virtual display exists, the server starts it with the regular scrcpy "start
+app" control message, and reports it back in the settings of the running
+streams, so that the shareable links can find the display showing an app. The
+app list comes from the same jar run with `list_apps=true`.
+
+## License
+
+This fork is a personal, non-commercial hobby project, distributed under the
+same license as the original project.
+
+* ws-scrcpy: [MIT](/LICENSE), Copyright (C) 2021 by Netris, JSC. The changes of
+this fork are released under the same MIT license, Copyright (C) 2026 Edoardo Pauletto
+([@EdoardoPauletto](https://github.com/EdoardoPauletto)).
+* The device server [scrcpy-server.jar](/vendor/Genymobile/scrcpy/scrcpy-server.jar)
+is [Genymobile/scrcpy][scrcpy] v5.0.1, licensed under the
+[Apache License 2.0](/vendor/Genymobile/scrcpy/LICENSE), **modified** by this
+fork with the [patch](/scrcpy-server/patches) in `scrcpy-server/patches`.
+* The bundled decoders keep their own licenses: [Broadway](/vendor/Broadway/LICENSE)
+and [h264-live-player](/vendor/h264-live-player/LICENSE) (BSD-style),
+[tinyh264](/vendor/tinyh264/LICENSE) (ISC). The npm dependencies are covered by
+their respective licenses.
+
+The software is provided "as is", without warranty of any kind (see
+[LICENSE](/LICENSE)).
 
 [fork]: https://github.com/NetrisTV/scrcpy/tree/feature/websocket-v1.19.x
+[upstream]: https://github.com/NetrisTV/ws-scrcpy
+[repo]: https://github.com/EdoardoPauletto/ws-scrcpy-plus
 
 [scrcpy]: https://github.com/Genymobile/scrcpy
 [xevokk/h264-converter]: https://github.com/xevokk/h264-converter
