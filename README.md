@@ -173,6 +173,34 @@ podman exec -it ws-scrcpy_ws-scrcpy_1 adb connect 192.168.1.10:5555
 podman-compose down          # stop; `up -d --build` again to update
 ```
 
+### ARM (NAS, Raspberry Pi)
+
+The image builds for `linux/amd64`, `linux/arm64` and `linux/arm/v7` (32-bit
+ARM). On ARM, `adb` comes from Debian bookworm-backports.
+
+Building on a slow, low-memory 32-bit device takes long, so build on a PC
+instead and copy the image over. Cross-building needs QEMU user emulation on
+the PC (e.g. `sudo apt install qemu-user-static` on Debian/Ubuntu); the
+JavaScript bundles are still built natively, only `node-pty` and the runtime
+packages run emulated:
+
+```shell
+# Docker: docker buildx build --platform linux/arm/v7 --load -t ws-scrcpy:armv7 .
+podman build --platform linux/arm/v7 -t ws-scrcpy:armv7 .
+# on the NAS, tag it with the name docker-compose.yml expects (Docker: docker load / docker tag)
+podman save ws-scrcpy:armv7 | ssh user@nas 'podman load && podman tag localhost/ws-scrcpy:armv7 ws-scrcpy:local'
+```
+
+Then on the NAS, next to `docker-compose.yml`: `podman-compose up -d` (or
+`docker compose up -d`), without `--build`, which uses the copied image.
+Building directly on the NAS (`up -d --build`) also works, just slowly.
+
+If the container hangs or fails right away on a 32-bit ARM host (wrong dates,
+`apt`/`node` stuck or erroring with "Operation not permitted"), the host's
+Docker/libseccomp is too old for the 64-bit time syscalls of current
+distributions: update it, or uncomment `security_opt: seccomp=unconfined` in
+`docker-compose.yml`.
+
 ## Supported features
 
 ### Android

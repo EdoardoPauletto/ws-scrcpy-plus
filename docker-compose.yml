@@ -15,6 +15,11 @@ services:
       # adb RSA keys: devices don't ask to re-authorize after every rebuild
       - adb-keys:/root/.android
       # - ./config.yaml:/config/config.yaml:ro
+    # 32-bit ARM hosts with an old Docker/libseccomp (< 2.4.2): the default
+    # seccomp profile blocks the 64-bit time syscalls, and node/apt hang or fail
+    # inside the container. Prefer updating the host; otherwise uncomment:
+    # security_opt:
+    #   - seccomp=unconfined
 
 volumes:
   adb-keys:
