@@ -143,8 +143,20 @@ docker compose exec ws-scrcpy adb devices
 
 The first time, accept the debugging authorization prompt on the device. The
 adb keys are kept in the `adb-keys` volume, so the device stays authorized
-across rebuilds; the connections themselves are not: after recreating the
-container, connect again (or list the devices in `ADB_CONNECT`).
+across rebuilds; the connections themselves are not: after a restart of the
+container or of the host, connect again, or list the devices in `ADB_CONNECT`
+to have them connected automatically, e.g. in a `.env` file next to
+`docker-compose.yml`:
+
+```shell
+ADB_CONNECT=192.168.1.10:5555,192.168.1.11:5555
+```
+
+The container keeps retrying in the background (every `ADB_RECONNECT_INTERVAL`
+seconds) until they are reachable, and reconnects them whenever they drop off.
+This needs a fixed address (a DHCP reservation) and port: `adb tcpip 5555`
+gives one, while the port of Android 11+ Wireless debugging changes every time
+it is turned on or the device reboots.
 
 Over USB (stop the host adb server first, `adb kill-server`; with rootless
 Podman the USB device nodes must also be accessible to your user):
@@ -155,8 +167,11 @@ docker compose -f docker-compose.yml -f docker-compose.usb.yml up -d --build
 
 ### Configuration
 
-* `ADB_CONNECT` - optional comma-separated `host[:port]` list connected on
-startup (handy for devices with a fixed address and port)
+* `ADB_CONNECT` - optional comma-separated `host[:port]` list (default port
+`5555`) connected on startup and reconnected when missing or offline (handy for
+devices with a fixed address and port)
+* `ADB_RECONNECT_INTERVAL` - seconds between those reconnection checks (default
+`30`, `0` connects only once at startup)
 * `WS_SCRCPY_PORT` - host port to publish (default `8000`)
 * to use a [run configuration](#run-configuration), uncomment the
 `WS_SCRCPY_CONFIG` lines in `docker-compose.yml`

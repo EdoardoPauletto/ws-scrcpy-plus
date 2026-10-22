@@ -10,6 +10,9 @@ services:
       # Optional: comma-separated host[:port] to `adb connect` on startup.
       # Devices can also be connected later: `docker compose exec ws-scrcpy adb connect ...`
       ADB_CONNECT: ${ADB_CONNECT:-}
+      # Seconds between checks that reconnect missing/offline ADB_CONNECT devices
+      # (e.g. after a reboot, before the network is up); 0 = connect only once.
+      ADB_RECONNECT_INTERVAL: ${ADB_RECONNECT_INTERVAL:-30}
       # WS_SCRCPY_CONFIG: /config/config.yaml
     volumes:
       # adb RSA keys: devices don't ask to re-authorize after every rebuild
