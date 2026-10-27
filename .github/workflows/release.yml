@@ -1,5 +1,6 @@
 # Release: push an annotated tag `vX.Y.Z` (its message is used for the release:
-# first line = title, the rest = notes). Builds and publishes the multi-arch
+# first line = title, the rest = notes; create it with `git tag -a --cleanup=verbatim`,
+# otherwise git drops the `#` Markdown headings as comments). Builds and publishes the multi-arch
 # container image to ghcr.io, then creates the GitHub release.
 name: Release
 

@@ -143,7 +143,8 @@ With `docker-compose.yml`, replace `build: .` and `image: ws-scrcpy:local` with
 file), then `docker compose pull && docker compose up -d` to install or update.
 
 A release is made by pushing an annotated tag `vX.Y.Z` (first line of its
-message = title, the rest = release notes): the
+message = title, the rest = release notes; create it with
+`git tag -a --cleanup=verbatim`, otherwise git drops the `#` headings): the
 [Release workflow](.github/workflows/release.yml) builds and publishes the
 image, then creates the GitHub release.
 
