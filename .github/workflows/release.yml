@@ -1,0 +1,85 @@
+# Release: push an annotated tag `vX.Y.Z` (its message is used for the release:
+# first line = title, the rest = notes). Builds and publishes the multi-arch
+# container image to ghcr.io, then creates the GitHub release.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # Image names must be lowercase
+      - id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # X.Y.Z, X.Y and (not for pre-releases like v1.0.0-rc.1) latest
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          IMAGE: ${{ needs.image.outputs.image }}
+        run: |
+          # The checkout makes the tag lightweight: fetch the annotated tag for its message
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          title=$(git tag -l --format='%(contents:subject)' "$TAG")
+          git tag -l --format='%(contents:body)' "$TAG" > notes.md
+          version=${TAG#v}
+          cat >> notes.md <<EOF
+
+          ## Container image
+
+          For \`linux/amd64\`, \`linux/arm64\` and \`linux/arm/v7\`:
+
+          \`\`\`shell
+          docker pull ${IMAGE}:${version}
+          \`\`\`
+          EOF
+          prerelease=()
+          if [[ "$version" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$TAG" --verify-tag --title "${title:-$TAG}" --notes-file notes.md "${prerelease[@]}"

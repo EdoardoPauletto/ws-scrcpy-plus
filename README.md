@@ -32,7 +32,8 @@ What this fork adds:
   tooltip for every option, stream menu, light and dark theme, empty states that
   explain what to do.
 * **Docker / Podman image** - `docker compose up -d --build` and you are done
-  (Android only).
+  (Android only); prebuilt for amd64, arm64 and 32-bit ARM on
+  [ghcr.io](#prebuilt-image).
 
 Quick start:
 
@@ -125,6 +126,27 @@ docker compose up -d --build        # Podman: podman-compose up -d --build
 Then open http://localhost:8000 (or `http://<computer IP>:8000` from another
 device of your network).
 
+### Prebuilt image
+
+Each [release](https://github.com/EdoardoPauletto/ws-scrcpy-plus/releases)
+publishes a multi-architecture image (`linux/amd64`, `linux/arm64`,
+`linux/arm/v7`) to the GitHub Container Registry, tagged with the version
+(`0.9.0`, `0.9`) and `latest`:
+
+```shell
+docker run -d --name ws-scrcpy -p 8000:8000 -v adb-keys:/root/.android \
+    -e ADB_CONNECT=192.168.1.10:5555 ghcr.io/edoardopauletto/ws-scrcpy-plus:latest
+```
+
+With `docker-compose.yml`, replace `build: .` and `image: ws-scrcpy:local` with
+`image: ghcr.io/edoardopauletto/ws-scrcpy-plus:latest` (see the comment in the
+file), then `docker compose pull && docker compose up -d` to install or update.
+
+A release is made by pushing an annotated tag `vX.Y.Z` (first line of its
+message = title, the rest = release notes): the
+[Release workflow](.github/workflows/release.yml) builds and publishes the
+image, then creates the GitHub release.
+
 ### Connecting devices
 
 Over Wi-Fi:
@@ -191,9 +213,10 @@ podman-compose down          # stop; `up -d --build` again to update
 ### ARM (NAS, Raspberry Pi)
 
 The image builds for `linux/amd64`, `linux/arm64` and `linux/arm/v7` (32-bit
-ARM). On ARM, `adb` comes from Debian bookworm-backports.
+ARM). On ARM, `adb` comes from Debian bookworm-backports. The simplest is the
+[prebuilt image](#prebuilt-image), which includes these architectures.
 
-Building on a slow, low-memory 32-bit device takes long, so build on a PC
+To build it yourself: building on a slow, low-memory 32-bit device takes long, so build on a PC
 instead and copy the image over. Cross-building needs QEMU user emulation on
 the PC (e.g. `sudo apt install qemu-user-static` on Debian/Ubuntu); the
 JavaScript bundles are still built natively, only `node-pty` and the runtime
