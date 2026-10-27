@@ -24,6 +24,8 @@ export interface DeviceEvents {
 export class Device extends TypedEmitter<DeviceEvents> {
     private static readonly INITIAL_UPDATE_TIMEOUT = 1500;
     private static readonly MAX_UPDATES_COUNT = 7;
+    // A server that exits sooner than this after its start is not restarted (it would probably fail again)
+    private static readonly MIN_SERVER_UPTIME = 30000;
     private connected = true;
     private pidDetectionVariant: PID_DETECTION = PID_DETECTION.UNKNOWN;
     private client: AdbKitClient;
@@ -445,6 +447,19 @@ export class Device extends TypedEmitter<DeviceEvents> {
         }
     }
 
+    private onServerExit(startTime: number): void {
+        if (!this.connected) {
+            return;
+        }
+        this.getServerPid().catch((error: Error) => {
+            console.error(this.TAG, `Error: ${error.message}`);
+        });
+        // The server exits when the Android system server restarts (soft reboot): start a new one
+        if (this.spawnServer && Date.now() - startTime >= Device.MIN_SERVER_UPTIME) {
+            this.scheduleInfoUpdate();
+        }
+    }
+
     public async startServer(): Promise<number | undefined> {
         this.spawnServer = true;
         const pid = await this.getServerPid();
@@ -452,7 +467,8 @@ export class Device extends TypedEmitter<DeviceEvents> {
             return pid;
         }
         try {
-            const output = await ScrcpyServer.run(this);
+            const startTime = Date.now();
+            const output = await ScrcpyServer.run(this, () => this.onServerExit(startTime));
             if (output) {
                 console.log(this.TAG, `start server: "${output}"`);
             }

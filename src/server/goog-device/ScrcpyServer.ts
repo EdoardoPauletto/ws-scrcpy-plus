@@ -19,10 +19,16 @@ type WaitForPidParams = { tryCounter: number; processExited: boolean; lookPidFil
 
 export class ScrcpyServer {
     private static PID_FILE_PATH = '/data/local/tmp/ws_scrcpy.pid';
-    private static async copyServer(device: Device): Promise<PushTransfer> {
+    private static async copyServer(device: Device): Promise<void> {
         const src = path.join(FILE_DIR, FILE_NAME);
         const dst = TEMP_PATH + DEVICE_FILE_NAME; // don't use path.join(): will not work on win host
-        return device.push(src, dst);
+        const transfer: PushTransfer = await device.push(src, dst);
+        // `push()` resolves once the transfer has started: on a slow device (e.g. over Wi-Fi) `app_process` would
+        // otherwise start on a truncated jar ("ClassNotFoundException: com.genymobile.scrcpy.Server")
+        return new Promise<void>((resolve, reject) => {
+            transfer.on('end', resolve);
+            transfer.on('error', reject);
+        });
     }
 
     // Important to notice that we first try to read PID from file.
@@ -111,7 +117,7 @@ export class ScrcpyServer {
         return serverPid;
     }
 
-    public static async run(device: Device): Promise<number[] | undefined> {
+    public static async run(device: Device, onExit?: () => void): Promise<number[] | undefined> {
         if (!device.isConnected()) {
             return;
         }
@@ -134,6 +140,7 @@ export class ScrcpyServer {
             })
             .finally(() => {
                 params.processExited = true;
+                onExit?.();
             });
         list = await Promise.race([runPromise, this.waitForServerPid(device, params)]);
         if (Array.isArray(list) && list.length) {

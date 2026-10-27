@@ -66,7 +66,7 @@ with the stream menu:
 
 | Area | [NetrisTV/ws-scrcpy][upstream] | This fork |
 | --- | --- | --- |
-| Device server | scrcpy 1.19 fork with a WebSocket server | Official scrcpy v5.0.1 + a [patch](/scrcpy-server/patches) (`5.0.1-ws2`), rebuilt in a container |
+| Device server | scrcpy 1.19 fork with a WebSocket server | Official scrcpy v5.0.1 + a [patch](/scrcpy-server/patches) (`5.0.1-ws3`), rebuilt in a container |
 | Displays | Existing displays | Also a **new virtual display** (fixed size or **flex**), with an **app** started on it |
 | Links | `#!action=stream&udid=...` links, per player | Also **shareable links** `/<device>/<package>` that create or join the stream |
 | Audio | - | Device audio in the browser (Android 11+), optionally kept on the device |
@@ -538,7 +538,7 @@ scrcpy-server/build.sh
 ```
 
 The server is started on the device as
-`app_process / com.genymobile.scrcpy.Server 5.0.1-ws2 web <log level> <port> <listen on all interfaces>`.
+`app_process / com.genymobile.scrcpy.Server 5.0.1-ws3 web <log level> <port> <listen on all interfaces>`.
 Each stream reuses the scrcpy capture, encoder and controller, and is shared by
 all the clients watching the same display. A newer version (`-wsN` suffix)
 replaces the server running on the device automatically.

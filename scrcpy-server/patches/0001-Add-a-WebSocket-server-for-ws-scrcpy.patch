@@ -1,4 +1,4 @@
-From 4331842f6e65582ecab1ea0cec13bb651bf6de03 Mon Sep 17 00:00:00 2001
+From 2f07ac0447418482996a3b483f603b2400f83430 Mon Sep 17 00:00:00 2001
 From: Edoardo Pauletto <104910976+EdoardoPauletto@users.noreply.github.com>
 Date: Wed, 14 Oct 2026 22:31:51 +0200
 Subject: [PATCH] Add a WebSocket server for ws-scrcpy
@@ -26,14 +26,15 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../java/com/genymobile/scrcpy/Server.java    |   7 +
  .../scrcpy/control/ControlChannel.java        |  10 +-
  .../genymobile/scrcpy/device/Streamer.java    |  52 ++-
- .../scrcpy/video/SurfaceEncoder.java          |  64 ++-
+ .../scrcpy/video/SurfaceEncoder.java          |  85 +++-
+ .../scrcpy/wrappers/ServiceManager.java       |   9 +
  .../com/genymobile/scrcpy/ws/WsAudio.java     | 108 +++++
  .../scrcpy/ws/WsControlChannel.java           |  72 +++
  .../com/genymobile/scrcpy/ws/WsFilePush.java  | 192 ++++++++
- .../com/genymobile/scrcpy/ws/WsServer.java    | 421 ++++++++++++++++++
- .../com/genymobile/scrcpy/ws/WsStream.java    | 325 ++++++++++++++
+ .../com/genymobile/scrcpy/ws/WsServer.java    | 431 ++++++++++++++++++
+ .../com/genymobile/scrcpy/ws/WsStream.java    | 325 +++++++++++++
  .../genymobile/scrcpy/ws/WsVideoSettings.java | 288 ++++++++++++
- 11 files changed, 1527 insertions(+), 15 deletions(-)
+ 12 files changed, 1565 insertions(+), 17 deletions(-)
  create mode 100644 server/src/main/java/com/genymobile/scrcpy/ws/WsAudio.java
  create mode 100644 server/src/main/java/com/genymobile/scrcpy/ws/WsControlChannel.java
  create mode 100644 server/src/main/java/com/genymobile/scrcpy/ws/WsFilePush.java
@@ -42,7 +43,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 server/src/main/java/com/genymobile/scrcpy/ws/WsVideoSettings.java
 
 diff --git a/server/build.gradle b/server/build.gradle
-index 333f64d..8506edb 100644
+index 333f64d..dc115da 100644
 --- a/server/build.gradle
 +++ b/server/build.gradle
 @@ -8,7 +8,7 @@ android {
@@ -50,7 +51,7 @@ index 333f64d..8506edb 100644
          targetSdkVersion 36
          versionCode 50001
 -        versionName "5.0.1"
-+        versionName "5.0.1-ws2"
++        versionName "5.0.1-ws3"
          testInstrumentationRunner = "android.support.test.runner.AndroidJUnitRunner"
      }
      buildTypes {
@@ -251,10 +252,15 @@ index e793f67..0817292 100644
  
      private static void fixOpusConfigPacket(ByteBuffer buffer) throws IOException {
 diff --git a/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java b/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java
-index 539681b..60a17f3 100644
+index 539681b..e5ab88d 100644
 --- a/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java
 +++ b/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java
-@@ -38,11 +38,14 @@ public class SurfaceEncoder implements AsyncProcessor {
+@@ -35,14 +35,19 @@ public class SurfaceEncoder implements AsyncProcessor {
+     // Keep the values in descending order
+     private static final int[] MAX_SIZE_FALLBACK = {2560, 1920, 1600, 1280, 1024, 800};
+     private static final int MAX_CONSECUTIVE_ERRORS = 3;
++    // Polling interval to detect a reset for encoders which can not be interrupted by an EOS (see canSignalEndOfInputStream())
++    private static final long RESET_POLL_TIMEOUT_US = 100_000;
  
      private final SurfaceCapture capture;
      private final Streamer streamer;
@@ -274,7 +280,7 @@ index 539681b..60a17f3 100644
      private final boolean downsizeOnError;
      private final int minSizeAlignment;
      private final boolean ignoreVideoEncoderConstraints;
-@@ -70,6 +73,38 @@ public class SurfaceEncoder implements AsyncProcessor {
+@@ -70,6 +75,38 @@ public class SurfaceEncoder implements AsyncProcessor {
          this.ignoreVideoEncoderConstraints = options.getIgnoreVideoEncoderConstraints();
      }
  
@@ -313,7 +319,7 @@ index 539681b..60a17f3 100644
      private void streamCapture() throws IOException, ConfigurationException {
          Codec codec = streamer.getCodec();
          MediaCodec mediaCodec = createMediaCodec(codec, encoderName);
-@@ -114,6 +149,25 @@ public class SurfaceEncoder implements AsyncProcessor {
+@@ -114,6 +151,25 @@ public class SurfaceEncoder implements AsyncProcessor {
                      retainedResetReasons = 0;
                  }
  
@@ -339,6 +345,78 @@ index 539681b..60a17f3 100644
                  capture.prepare();
                  Size size = capture.getSize();
  
+@@ -134,7 +190,9 @@ public class SurfaceEncoder implements AsyncProcessor {
+                     mediaCodecStarted = true;
+ 
+                     // Set the MediaCodec instance to "interrupt" (by signaling an EOS) on reset
+-                    captureControl.setRunningMediaCodec(mediaCodec);
++                    if (canSignalEndOfInputStream(mediaCodec)) {
++                        captureControl.setRunningMediaCodec(mediaCodec);
++                    }
+ 
+                     if (stopped.get()) {
+                         alive = false;
+@@ -249,12 +307,22 @@ public class SurfaceEncoder implements AsyncProcessor {
+         return 0;
+     }
+ 
++    /**
++     * The TI OMAP4 encoders (e.g. "OMX.TI.DUCATI1.VIDEO.H264E" on Android 6) crash the media server on
++     * {@link MediaCodec#signalEndOfInputStream()} (null dereference of the EOS buffer), which may also hang SurfaceFlinger
++     * and trigger a system server restart: for them, a reset is detected by polling instead.
++     */
++    private static boolean canSignalEndOfInputStream(MediaCodec codec) {
++        return !codec.getName().startsWith("OMX.TI.");
++    }
++
+     private void encode(MediaCodec codec, Streamer streamer) throws IOException {
+         MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
++        boolean pollReset = !canSignalEndOfInputStream(codec);
+ 
+         boolean eos;
+         do {
+-            int outputBufferId = codec.dequeueOutputBuffer(bufferInfo, -1);
++            int outputBufferId = codec.dequeueOutputBuffer(bufferInfo, pollReset ? RESET_POLL_TIMEOUT_US : -1);
+             try {
+                 eos = (bufferInfo.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
+                 // On EOS, there might be data or not, depending on bufferInfo.size
+@@ -274,6 +342,9 @@ public class SurfaceEncoder implements AsyncProcessor {
+                     codec.releaseOutputBuffer(outputBufferId, false);
+                 }
+             }
++            if (pollReset && captureControl.isResetRequested()) {
++                eos = true;
++            }
+         } while (!eos);
+     }
+ 
+diff --git a/server/src/main/java/com/genymobile/scrcpy/wrappers/ServiceManager.java b/server/src/main/java/com/genymobile/scrcpy/wrappers/ServiceManager.java
+index b1123b5..8ed8806 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/wrappers/ServiceManager.java
++++ b/server/src/main/java/com/genymobile/scrcpy/wrappers/ServiceManager.java
+@@ -7,6 +7,7 @@ import android.content.Context;
+ import android.hardware.camera2.CameraManager;
+ import android.os.IBinder;
+ import android.os.IInterface;
++import android.os.RemoteException;
+ 
+ import java.lang.reflect.Constructor;
+ import java.lang.reflect.Method;
+@@ -47,6 +48,14 @@ public final class ServiceManager {
+         }
+     }
+ 
++    /**
++     * Call {@code recipient} when the system server (hosting the services cached here) dies, for example on a soft reboot.
++     */
++    public static void linkToSystemServerDeath(IBinder.DeathRecipient recipient) throws ReflectiveOperationException, RemoteException {
++        IBinder binder = (IBinder) GET_SERVICE_METHOD.invoke(null, "activity");
++        binder.linkToDeath(recipient, 0);
++    }
++
+     public static WindowManager getWindowManager() {
+         if (windowManager == null) {
+             windowManager = WindowManager.create();
 diff --git a/server/src/main/java/com/genymobile/scrcpy/ws/WsAudio.java b/server/src/main/java/com/genymobile/scrcpy/ws/WsAudio.java
 new file mode 100644
 index 0000000..48f3ec7
@@ -731,10 +809,10 @@ index 0000000..4cd0516
 +}
 diff --git a/server/src/main/java/com/genymobile/scrcpy/ws/WsServer.java b/server/src/main/java/com/genymobile/scrcpy/ws/WsServer.java
 new file mode 100644
-index 0000000..192fdb1
+index 0000000..faf34d3
 --- /dev/null
 +++ b/server/src/main/java/com/genymobile/scrcpy/ws/WsServer.java
-@@ -0,0 +1,421 @@
+@@ -0,0 +1,431 @@
 +package com.genymobile.scrcpy.ws;
 +
 +import com.genymobile.scrcpy.BuildConfig;
@@ -749,6 +827,7 @@ index 0000000..192fdb1
 +import android.media.MediaCodecInfo;
 +import android.media.MediaCodecList;
 +import android.os.Looper;
++import android.os.RemoteException;
 +
 +import org.java_websocket.WebSocket;
 +import org.java_websocket.framing.CloseFrame;
@@ -833,6 +912,15 @@ index 0000000..192fdb1
 +        Workarounds.apply();
 +        // The clipboard manager must be created from the main thread
 +        ServiceManager.getClipboardManager();
++        try {
++            // The cached services are dead after a restart of the system server: exit, ws-scrcpy starts a new server
++            ServiceManager.linkToSystemServerDeath(() -> {
++                Ln.e("The system server died, exiting");
++                System.exit(1);
++            });
++        } catch (ReflectiveOperationException | RemoteException e) {
++            Ln.w("Could not monitor the system server", e);
++        }
 +
 +        unlinkPidFile();
 +        WsServer server = new WsServer(new InetSocketAddress(listenOnAllInterfaces ? "0.0.0.0" : "127.0.0.1", port), level);
